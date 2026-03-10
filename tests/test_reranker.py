@@ -87,9 +87,7 @@ class TestOnnxReranker:
         assert result[1].point_id == "p0"
         assert result[2].point_id == "p2"
 
-    def test_top_k_respected(
-        self, config: RerankerConfig, sample_hits: list[SearchHit]
-    ) -> None:
+    def test_top_k_respected(self, config: RerankerConfig, sample_hits: list[SearchHit]) -> None:
         reranker = OnnxReranker(config)
         candidates = sample_hits[:4]
         _patch_loading(reranker, [1.0, 3.0, 2.0, 0.5])
@@ -111,9 +109,7 @@ class TestOnnxReranker:
         assert result[1].score == pytest.approx(0.0474, abs=0.01)
         assert result[0].score != 0.5
 
-    def test_lazy_loading_no_model_loaded_on_init(
-        self, config: RerankerConfig
-    ) -> None:
+    def test_lazy_loading_no_model_loaded_on_init(self, config: RerankerConfig) -> None:
         reranker = OnnxReranker(config)
         assert reranker._session is None
         assert reranker._tokenizer is None

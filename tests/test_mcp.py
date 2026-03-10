@@ -59,9 +59,7 @@ def _make_components() -> tuple[_Components, MagicMock, MagicMock]:
     return components, mock_db, mock_engine
 
 
-def _make_cited_evidence(
-    text: str = "sample text", score: float = 0.95
-) -> CitedEvidence:
+def _make_cited_evidence(text: str = "sample text", score: float = 0.95) -> CitedEvidence:
     return CitedEvidence(
         text=text,
         citation=Citation(
@@ -92,9 +90,7 @@ def _make_document_row(doc_id: str = "doc-1") -> DocumentRow:
     )
 
 
-def _make_section_row(
-    doc_id: str = "doc-1", order: int = 0
-) -> SectionRow:
+def _make_section_row(doc_id: str = "doc-1", order: int = 0) -> SectionRow:
     return SectionRow(
         section_id=f"sec-{order}",
         doc_id=doc_id,
@@ -165,9 +161,7 @@ class TestSearchDocuments:
             query_classification="broad",
         )
 
-        result = asyncio.run(
-            _handle_search(components, {"query": "test query"})
-        )
+        result = asyncio.run(_handle_search(components, {"query": "test query"}))
 
         assert len(result) == 1
         data = json.loads(result[0].text)
@@ -211,9 +205,7 @@ class TestSearchDocuments:
             debug_info={"total_ms": 42},
         )
 
-        result = asyncio.run(
-            _handle_search(components, {"query": "test", "debug": True})
-        )
+        result = asyncio.run(_handle_search(components, {"query": "test", "debug": True}))
 
         data = json.loads(result[0].text)
         assert data["debug_info"]["total_ms"] == 42
@@ -232,9 +224,7 @@ class TestGetDocumentContext:
             _make_section_row(order=1),
         ]
 
-        result = asyncio.run(
-            _handle_get_context(components, {"doc_id": "doc-1"})
-        )
+        result = asyncio.run(_handle_get_context(components, {"doc_id": "doc-1"}))
 
         data = json.loads(result[0].text)
         assert data["doc_id"] == "doc-1"
@@ -254,11 +244,7 @@ class TestGetDocumentContext:
         ]
         mock_db.get_document.return_value = _make_document_row()
 
-        result = asyncio.run(
-            _handle_get_context(
-                components, {"chunk_id": "chunk-2", "window": 1}
-            )
-        )
+        result = asyncio.run(_handle_get_context(components, {"chunk_id": "chunk-2", "window": 1}))
 
         data = json.loads(result[0].text)
         assert data["doc_id"] == "doc-1"
@@ -278,9 +264,7 @@ class TestGetDocumentContext:
         components, mock_db, _engine = _make_components()
         mock_db.get_document.return_value = None
 
-        result = asyncio.run(
-            _handle_get_context(components, {"doc_id": "nonexistent"})
-        )
+        result = asyncio.run(_handle_get_context(components, {"doc_id": "nonexistent"}))
 
         data = json.loads(result[0].text)
         assert "error" in data
@@ -290,11 +274,7 @@ class TestGetDocumentContext:
         components, mock_db, _engine = _make_components()
         mock_db.get_chunk.return_value = None
 
-        result = asyncio.run(
-            _handle_get_context(
-                components, {"chunk_id": "nonexistent"}
-            )
-        )
+        result = asyncio.run(_handle_get_context(components, {"chunk_id": "nonexistent"}))
 
         data = json.loads(result[0].text)
         assert "error" in data
@@ -332,11 +312,7 @@ class TestListRecentDocuments:
         components, mock_db, _engine = _make_components()
         mock_db.get_recent_documents.return_value = []
 
-        asyncio.run(
-            _handle_list_recent(
-                components, {"folder_filter": "/docs", "limit": 10}
-            )
-        )
+        asyncio.run(_handle_list_recent(components, {"folder_filter": "/docs", "limit": 10}))
 
         mock_db.get_recent_documents.assert_called_once_with(10, "/docs")
 
@@ -369,29 +345,16 @@ class TestGetSyncStatus:
             3: 1,
         }[i]
 
-        q_total = (
-            "SELECT COUNT(*) FROM sync_state WHERE NOT is_deleted"
-        )
+        q_total = "SELECT COUNT(*) FROM sync_state WHERE NOT is_deleted"
         q_pending = (
-            "SELECT COUNT(*) FROM sync_state"
-            " WHERE process_status = 'pending'"
-            " AND NOT is_deleted"
+            "SELECT COUNT(*) FROM sync_state WHERE process_status = 'pending' AND NOT is_deleted"
         )
-        q_sync = (
-            "SELECT MAX(synced_at) FROM sync_state"
-            " WHERE synced_at IS NOT NULL"
-        )
+        q_sync = "SELECT MAX(synced_at) FROM sync_state WHERE synced_at IS NOT NULL"
 
         execute_results: dict[str, MagicMock] = {
-            q_total: MagicMock(
-                fetchone=MagicMock(return_value=total_row)
-            ),
-            q_pending: MagicMock(
-                fetchone=MagicMock(return_value=pending_row)
-            ),
-            q_sync: MagicMock(
-                fetchone=MagicMock(return_value=last_sync_row)
-            ),
+            q_total: MagicMock(fetchone=MagicMock(return_value=total_row)),
+            q_pending: MagicMock(fetchone=MagicMock(return_value=pending_row)),
+            q_sync: MagicMock(fetchone=MagicMock(return_value=last_sync_row)),
         }
 
         def side_effect(sql: str) -> MagicMock:

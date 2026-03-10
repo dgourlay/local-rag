@@ -91,8 +91,7 @@ _TOOLS: list[types.Tool] = [
                 "date_filter": {
                     "type": "string",
                     "description": (
-                        "ISO 8601 date; only return docs modified on or after"
-                        " this date"
+                        "ISO 8601 date; only return docs modified on or after this date"
                     ),
                 },
                 "top_k": {
@@ -199,9 +198,7 @@ def register_tools(server: Server, config: AppConfig) -> None:
             return _error_content(f"Internal error executing {name}")
 
 
-async def _handle_search(
-    components: _Components, args: dict[str, Any]
-) -> list[types.TextContent]:
+async def _handle_search(components: _Components, args: dict[str, Any]) -> list[types.TextContent]:
     from rag.types import SearchDocumentsInput, SearchDocumentsOutput, SearchFilters
 
     inp = SearchDocumentsInput.model_validate(args)
@@ -284,9 +281,7 @@ async def _handle_list_recent(
     inp = ListRecentDocumentsInput.model_validate(args)
     db = components.db
 
-    docs = await asyncio.to_thread(
-        db.get_recent_documents, inp.limit, inp.folder_filter
-    )
+    docs = await asyncio.to_thread(db.get_recent_documents, inp.limit, inp.folder_filter)
 
     entries = [
         RecentDocumentEntry(
@@ -314,9 +309,7 @@ async def _handle_sync_status(
     conn = db._conn
 
     total_files = await asyncio.to_thread(
-        lambda: conn.execute(
-            "SELECT COUNT(*) FROM sync_state WHERE NOT is_deleted"
-        ).fetchone()[0]
+        lambda: conn.execute("SELECT COUNT(*) FROM sync_state WHERE NOT is_deleted").fetchone()[0]
     )
     indexed_count = await asyncio.to_thread(db.get_document_count)
     error_count = await asyncio.to_thread(db.get_error_count)

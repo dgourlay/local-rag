@@ -77,9 +77,7 @@ class CitationAssembler:
         if chunk_order is None:
             return hit.text
 
-        adjacent: list[ChunkRow] = self._db.get_adjacent_chunks(
-            hit.doc_id, chunk_order, window
-        )
+        adjacent: list[ChunkRow] = self._db.get_adjacent_chunks(hit.doc_id, chunk_order, window)
         if not adjacent:
             return hit.text
 

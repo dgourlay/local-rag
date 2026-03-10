@@ -122,9 +122,7 @@ class TestContextExpansion:
             _make_chunk_row(2, "After chunk."),
         ]
         hit = _make_hit(text="Main chunk.", chunk_order=1)
-        results = assembler.assemble_citations(
-            [hit], expand_context=True, context_window=1
-        )
+        results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         assert "Before chunk." in results[0].text
         assert "Main chunk." in results[0].text
         assert "After chunk." in results[0].text
@@ -136,14 +134,10 @@ class TestContextExpansion:
         assert results[0].text == "Only this text."
         mock_db.get_adjacent_chunks.assert_not_called()
 
-    def test_no_expansion_when_chunk_order_missing(
-        self, mock_db: MagicMock
-    ) -> None:
+    def test_no_expansion_when_chunk_order_missing(self, mock_db: MagicMock) -> None:
         assembler = CitationAssembler(mock_db)
         hit = _make_hit(text="Original text.", chunk_order=None)
-        results = assembler.assemble_citations(
-            [hit], expand_context=True, context_window=1
-        )
+        results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         assert results[0].text == "Original text."
         mock_db.get_adjacent_chunks.assert_not_called()
 
@@ -151,9 +145,7 @@ class TestContextExpansion:
         assembler = CitationAssembler(mock_db)
         mock_db.get_adjacent_chunks.return_value = []
         hit = _make_hit(text="Standalone chunk.", chunk_order=0)
-        results = assembler.assemble_citations(
-            [hit], expand_context=True, context_window=1
-        )
+        results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         assert results[0].text == "Standalone chunk."
 
 
@@ -169,9 +161,7 @@ class TestOverlapDedup:
             _make_chunk_row(1, chunk_b),
         ]
         hit = _make_hit(text="whatever", chunk_order=0)
-        results = assembler.assemble_citations(
-            [hit], expand_context=True, context_window=1
-        )
+        results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         merged = results[0].text
         # Overlap text should appear exactly once
         assert merged.count(overlap) == 1
@@ -185,9 +175,7 @@ class TestOverlapDedup:
             _make_chunk_row(1, "Chunk B content."),
         ]
         hit = _make_hit(text="whatever", chunk_order=0)
-        results = assembler.assemble_citations(
-            [hit], expand_context=True, context_window=1
-        )
+        results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         assert results[0].text == "Chunk A content.\n\nChunk B content."
 
 
@@ -199,9 +187,7 @@ class TestEdgeCases:
 
     def test_missing_file_path(self, mock_db: MagicMock) -> None:
         assembler = CitationAssembler(mock_db)
-        hit = _make_hit(
-            file_path="", section_heading=None, page_start=None, page_end=None
-        )
+        hit = _make_hit(file_path="", section_heading=None, page_start=None, page_end=None)
         results = assembler.assemble_citations([hit], expand_context=False)
         assert results[0].citation.label == "Unknown"
 

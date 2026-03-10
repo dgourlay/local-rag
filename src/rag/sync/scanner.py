@@ -70,9 +70,7 @@ def scan_folders(config: FoldersConfig) -> list[FileEvent]:
                 try:
                     content_hash = compute_file_hash(file_path)
                     stat = file_path.stat()
-                    modified_at = datetime.fromtimestamp(
-                        stat.st_mtime, tz=UTC
-                    ).isoformat()
+                    modified_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
                     events.append(
                         FileEvent(
                             file_path=str(file_path),
@@ -127,9 +125,7 @@ def rescan_for_changes(
                 except OSError:
                     continue
 
-                modified_at = datetime.fromtimestamp(
-                    stat.st_mtime, tz=UTC
-                ).isoformat()
+                modified_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
 
                 existing = get_sync_state(path_str)
                 if existing is None:

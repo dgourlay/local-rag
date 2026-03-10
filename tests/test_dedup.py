@@ -61,7 +61,9 @@ class TestRegisterHash:
         assert checker.check_duplicate("hash_b") == "doc-002"
 
     def test_overwrite_on_same_file_path(
-        self, checker: DedupChecker, db: sqlite3.Connection,
+        self,
+        checker: DedupChecker,
+        db: sqlite3.Connection,
     ) -> None:
         checker.register_hash("/docs/a.pdf", "old_hash", "old_norm", "doc-001")
         checker.register_hash("/docs/a.pdf", "new_hash", "new_norm", "doc-002")

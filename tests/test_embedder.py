@@ -31,9 +31,7 @@ class TestSentenceTransformerEmbedder:
     def test_embed_batch_returns_correct_count(
         self, config: EmbeddingConfig, mock_model: MagicMock
     ) -> None:
-        with patch(
-            "sentence_transformers.SentenceTransformer", return_value=mock_model
-        ):
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
             embedder = SentenceTransformerEmbedder(config)
             results = embedder.embed_batch(["text one", "text two", "text three"])
 
@@ -43,9 +41,7 @@ class TestSentenceTransformerEmbedder:
     def test_embed_batch_calls_encode_with_config(
         self, config: EmbeddingConfig, mock_model: MagicMock
     ) -> None:
-        with patch(
-            "sentence_transformers.SentenceTransformer", return_value=mock_model
-        ):
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
             embedder = SentenceTransformerEmbedder(config)
             embedder.embed_batch(["hello"])
 
@@ -56,14 +52,10 @@ class TestSentenceTransformerEmbedder:
             normalize_embeddings=True,
         )
 
-    def test_embed_query_returns_single_vector(
-        self, config: EmbeddingConfig
-    ) -> None:
+    def test_embed_query_returns_single_vector(self, config: EmbeddingConfig) -> None:
         single_mock = MagicMock()
         single_mock.encode.return_value = np.random.rand(1, 1024).astype(np.float32)
-        with patch(
-            "sentence_transformers.SentenceTransformer", return_value=single_mock
-        ):
+        with patch("sentence_transformers.SentenceTransformer", return_value=single_mock):
             embedder = SentenceTransformerEmbedder(config)
             result = embedder.embed_query("search query")
 
@@ -78,12 +70,8 @@ class TestSentenceTransformerEmbedder:
         embedder = SentenceTransformerEmbedder(config)
         assert embedder.model_version == "BAAI/bge-m3"
 
-    def test_lazy_loading_model_not_loaded_at_init(
-        self, config: EmbeddingConfig
-    ) -> None:
-        with patch(
-            "sentence_transformers.SentenceTransformer"
-        ) as mock_cls:
+    def test_lazy_loading_model_not_loaded_at_init(self, config: EmbeddingConfig) -> None:
+        with patch("sentence_transformers.SentenceTransformer") as mock_cls:
             embedder = SentenceTransformerEmbedder(config)
             mock_cls.assert_not_called()
             assert embedder._model is None
@@ -106,9 +94,7 @@ class TestSentenceTransformerEmbedder:
     def test_embed_batch_returns_plain_floats(
         self, config: EmbeddingConfig, mock_model: MagicMock
     ) -> None:
-        with patch(
-            "sentence_transformers.SentenceTransformer", return_value=mock_model
-        ):
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
             embedder = SentenceTransformerEmbedder(config)
             results = embedder.embed_batch(["text"])
 

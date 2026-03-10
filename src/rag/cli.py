@@ -292,9 +292,7 @@ def watch(daemon: bool) -> None:
 
         def flush(self) -> list[str]:
             now = time.monotonic()
-            ready = [
-                p for p, t in self._pending.items() if now - t >= self._debounce
-            ]
+            ready = [p for p, t in self._pending.items() if now - t >= self._debounce]
             for p in ready:
                 del self._pending[p]
             return ready
@@ -329,9 +327,7 @@ def watch(daemon: bool) -> None:
                     try:
                         content_hash = compute_file_hash(path)
                         stat = path.stat()
-                        modified_at = datetime.fromtimestamp(
-                            stat.st_mtime, tz=UTC
-                        ).isoformat()
+                        modified_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
                         events.append(
                             FileEvent(
                                 file_path=str(path),
@@ -346,8 +342,7 @@ def watch(daemon: bool) -> None:
                 if events:
                     success, errors = runner.process_batch(events)
                     click.echo(
-                        f"Processed {success + errors} files: "
-                        f"{success} ok, {errors} errors."
+                        f"Processed {success + errors} files: {success} ok, {errors} errors."
                     )
     except KeyboardInterrupt:
         observer.stop()
@@ -409,10 +404,7 @@ def status(as_json: bool) -> None:
         if folder_rows:
             click.echo("\nPer-folder breakdown:")
             for row in folder_rows:
-                click.echo(
-                    f"  {row[0]}: {row[1]} files, "
-                    f"{row[2]} indexed, {row[3]} errors"
-                )
+                click.echo(f"  {row[0]}: {row[1]} files, {row[2]} indexed, {row[3]} errors")
 
 
 @main.command()

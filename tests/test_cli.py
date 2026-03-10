@@ -23,8 +23,14 @@ class TestHelp:
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
         for cmd in [
-            "init", "index", "serve", "watch",
-            "status", "doctor", "search", "mcp-config",
+            "init",
+            "index",
+            "serve",
+            "watch",
+            "status",
+            "doctor",
+            "search",
+            "mcp-config",
         ]:
             assert cmd in result.output
 
@@ -88,9 +94,7 @@ class TestDoctor:
         assert "Qdrant:    PASS" in result.output
 
     @patch("rag.config.load_config", side_effect=FileNotFoundError("not found"))
-    def test_doctor_no_config(
-        self, mock_config: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_doctor_no_config(self, mock_config: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(main, ["doctor"])
         assert result.exit_code == 0
         assert "FAIL" in result.output
@@ -194,9 +198,7 @@ class TestSearch:
         )
 
         engine = MagicMock()
-        engine.search.return_value = MagicMock(
-            hits=[hit], debug_info=None
-        )
+        engine.search.return_value = MagicMock(hits=[hit], debug_info=None)
         mock_init.return_value = (MagicMock(), MagicMock(), engine)
 
         result = runner.invoke(main, ["search", "test query"])
@@ -231,9 +233,7 @@ class TestInit:
 
         with patch("rag.init.create_config") as mock_create:
             mock_create.return_value = config_file
-            result = runner.invoke(
-                main, ["init", "--add-folder", str(folder)]
-            )
+            result = runner.invoke(main, ["init", "--add-folder", str(folder)])
             assert result.exit_code == 0
 
 

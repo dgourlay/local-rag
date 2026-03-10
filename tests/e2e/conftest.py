@@ -76,9 +76,7 @@ class FakeEmbedder:
 class FakeReranker:
     """Pass-through reranker that just truncates to top_k."""
 
-    def rerank(
-        self, query: str, candidates: list[SearchHit], top_k: int
-    ) -> list[SearchHit]:
+    def rerank(self, query: str, candidates: list[SearchHit], top_k: int) -> list[SearchHit]:
         return candidates[:top_k]
 
 

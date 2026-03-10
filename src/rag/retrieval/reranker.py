@@ -46,9 +46,7 @@ class OnnxReranker:
         self._tokenizer = AutoTokenizer.from_pretrained(model_path)  # type: ignore[no-untyped-call]
         logger.info("Loaded reranker model from %s", model_path)
 
-    def rerank(
-        self, query: str, candidates: list[SearchHit], top_k: int
-    ) -> list[SearchHit]:
+    def rerank(self, query: str, candidates: list[SearchHit], top_k: int) -> list[SearchHit]:
         """Rerank candidates by cross-encoder relevance. Returns top_k sorted by score."""
         from rag.types import SearchHit as SearchHitCls
 

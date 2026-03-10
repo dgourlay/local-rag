@@ -38,9 +38,7 @@ def chunk_document(doc: NormalizedDocument) -> list[Chunk]:
     file_name = doc.title or doc.doc_id
 
     for section in doc.sections:
-        section_id = str(
-            uuid.uuid5(NAMESPACE_RAG, f"{doc.doc_id}:section:{section.order}")
-        )
+        section_id = str(uuid.uuid5(NAMESPACE_RAG, f"{doc.doc_id}:section:{section.order}"))
         section_chunks = _chunk_section(
             text=section.text,
             doc_id=doc.doc_id,
@@ -157,12 +155,8 @@ def _make_chunk(
     token_count: int,
 ) -> Chunk:
     """Create a Chunk with deterministic UUID5 ID and citation label."""
-    chunk_id = str(
-        uuid.uuid5(NAMESPACE_RAG, f"{doc_id}:{section.order}:{chunk_idx}")
-    )
-    citation = _build_citation(
-        file_name, section.heading, section.page_start, section.page_end
-    )
+    chunk_id = str(uuid.uuid5(NAMESPACE_RAG, f"{doc_id}:{section.order}:{chunk_idx}"))
+    citation = _build_citation(file_name, section.heading, section.page_start, section.page_end)
     return Chunk(
         chunk_id=chunk_id,
         doc_id=doc_id,

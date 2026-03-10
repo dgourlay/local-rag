@@ -158,9 +158,7 @@ class TestDoclingParserSubprocess:
         pdf_file = tmp_path / "test.pdf"
         pdf_file.write_bytes(b"%PDF-1.4 content")
 
-        mock_ctx = _make_mock_context(
-            {"status": "error", "error": "test"}
-        )
+        mock_ctx = _make_mock_context({"status": "error", "error": "test"})
 
         with patch("multiprocessing.get_context", return_value=mock_ctx) as mock_get_ctx:
             parser = DoclingParser()
@@ -177,8 +175,7 @@ class TestDoclingParserSubprocess:
         top_level_imports = [
             line
             for line in lines
-            if line.startswith("import docling")
-            or line.startswith("from docling")
+            if line.startswith("import docling") or line.startswith("from docling")
         ]
         assert top_level_imports == [], (
             "docling should only be imported inside the subprocess function"

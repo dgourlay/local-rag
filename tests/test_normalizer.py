@@ -62,9 +62,7 @@ class TestHeadingPreservation:
 
 class TestPageMappingPreservation:
     def test_page_start_end_preserved(self) -> None:
-        section = ParsedSection(
-            heading=None, order=0, text="content", page_start=3, page_end=5
-        )
+        section = ParsedSection(heading=None, order=0, text="content", page_start=3, page_end=5)
         doc = _make_doc([section])
         result = normalize(doc)
         assert result.sections[0].page_start == 3

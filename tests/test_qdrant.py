@@ -112,10 +112,13 @@ class TestDeleteStalePoints:
         store = _make_store()
         id1 = str(uuid.uuid4())
         id2 = str(uuid.uuid4())
-        store.upsert_points("doc-1", [
-            _make_point(id1, doc_id="doc-1", text="keep this"),
-            _make_point(id2, doc_id="doc-1", text="delete this"),
-        ])
+        store.upsert_points(
+            "doc-1",
+            [
+                _make_point(id1, doc_id="doc-1", text="keep this"),
+                _make_point(id2, doc_id="doc-1", text="delete this"),
+            ],
+        )
 
         store.delete_stale_points("doc-1", keep_ids={id1})
 
@@ -137,11 +140,14 @@ class TestDeleteStalePoints:
 class TestQueryKeyword:
     def test_keyword_search(self) -> None:
         store = _make_store()
-        store.upsert_points("doc-1", [
-            _make_point(str(uuid.uuid4()), text="python programming language"),
-            _make_point(str(uuid.uuid4()), text="java programming language"),
-            _make_point(str(uuid.uuid4()), text="cooking recipes for dinner"),
-        ])
+        store.upsert_points(
+            "doc-1",
+            [
+                _make_point(str(uuid.uuid4()), text="python programming language"),
+                _make_point(str(uuid.uuid4()), text="java programming language"),
+                _make_point(str(uuid.uuid4()), text="cooking recipes for dinner"),
+            ],
+        )
 
         results = store.query_keyword(
             query="programming",
@@ -155,9 +161,12 @@ class TestQueryKeyword:
 
     def test_keyword_no_results(self) -> None:
         store = _make_store()
-        store.upsert_points("doc-1", [
-            _make_point(str(uuid.uuid4()), text="hello world test"),
-        ])
+        store.upsert_points(
+            "doc-1",
+            [
+                _make_point(str(uuid.uuid4()), text="hello world test"),
+            ],
+        )
 
         results = store.query_keyword(
             query="nonexistent",
@@ -176,12 +185,18 @@ class TestFilterQueries:
         v2[0] = 0.9
         v2[1] = 0.1
 
-        store.upsert_points("doc-1", [
-            _make_point(str(uuid.uuid4()), folder_path="/docs/work"),
-        ])
-        store.upsert_points("doc-2", [
-            _make_point(str(uuid.uuid4()), doc_id="doc-2", folder_path="/docs/personal"),
-        ])
+        store.upsert_points(
+            "doc-1",
+            [
+                _make_point(str(uuid.uuid4()), folder_path="/docs/work"),
+            ],
+        )
+        store.upsert_points(
+            "doc-2",
+            [
+                _make_point(str(uuid.uuid4()), doc_id="doc-2", folder_path="/docs/personal"),
+            ],
+        )
 
         results = store.query_dense(
             vector=v1,
@@ -193,14 +208,18 @@ class TestFilterQueries:
 
     def test_file_type_filter(self) -> None:
         store = _make_store()
-        store.upsert_points("doc-1", [
-            _make_point(str(uuid.uuid4()), file_type=FileType.PDF),
-        ])
-        store.upsert_points("doc-2", [
-            _make_point(
-                str(uuid.uuid4()), doc_id="doc-2", file_type=FileType.MD
-            ),
-        ])
+        store.upsert_points(
+            "doc-1",
+            [
+                _make_point(str(uuid.uuid4()), file_type=FileType.PDF),
+            ],
+        )
+        store.upsert_points(
+            "doc-2",
+            [
+                _make_point(str(uuid.uuid4()), doc_id="doc-2", file_type=FileType.MD),
+            ],
+        )
 
         results = store.query_dense(
             vector=_make_point("x").vector,
@@ -212,21 +231,27 @@ class TestFilterQueries:
 
     def test_keyword_with_folder_filter(self) -> None:
         store = _make_store()
-        store.upsert_points("doc-1", [
-            _make_point(
-                str(uuid.uuid4()),
-                text="deep learning neural networks",
-                folder_path="/research",
-            ),
-        ])
-        store.upsert_points("doc-2", [
-            _make_point(
-                str(uuid.uuid4()),
-                doc_id="doc-2",
-                text="deep learning transformers",
-                folder_path="/notes",
-            ),
-        ])
+        store.upsert_points(
+            "doc-1",
+            [
+                _make_point(
+                    str(uuid.uuid4()),
+                    text="deep learning neural networks",
+                    folder_path="/research",
+                ),
+            ],
+        )
+        store.upsert_points(
+            "doc-2",
+            [
+                _make_point(
+                    str(uuid.uuid4()),
+                    doc_id="doc-2",
+                    text="deep learning transformers",
+                    folder_path="/notes",
+                ),
+            ],
+        )
 
         results = store.query_keyword(
             query="learning",

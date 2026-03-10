@@ -101,9 +101,7 @@ class TestHeadingBoundary:
 
 class TestDeterministicIDs:
     def test_same_input_same_ids(self) -> None:
-        doc = _make_doc(
-            sections=[_make_section("Some repeatable content here.", order=0)]
-        )
+        doc = _make_doc(sections=[_make_section("Some repeatable content here.", order=0)])
         chunks_a = chunk_document(doc)
         chunks_b = chunk_document(doc)
         assert len(chunks_a) == len(chunks_b)
@@ -195,16 +193,12 @@ class TestOverlap:
             overlap_found = any(
                 s.strip() in next_text for s in current_sentences[-3:] if s.strip()
             )
-            assert overlap_found, (
-                f"No overlap found between chunk {i} and chunk {i + 1}"
-            )
+            assert overlap_found, f"No overlap found between chunk {i} and chunk {i + 1}"
 
 
 class TestTextNormalized:
     def test_text_normalized_is_lowercase(self) -> None:
-        doc = _make_doc(
-            sections=[_make_section("Hello World. This Is Mixed Case.", order=0)]
-        )
+        doc = _make_doc(sections=[_make_section("Hello World. This Is Mixed Case.", order=0)])
         chunks = chunk_document(doc)
         for chunk in chunks:
             assert chunk.text_normalized == chunk.text.lower()

@@ -236,9 +236,7 @@ class TestRescanForChanges:
 
         # Record original state
         stat = f.stat()
-        original_mtime = datetime.fromtimestamp(
-            stat.st_mtime, tz=UTC
-        ).isoformat()
+        original_mtime = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
         state = _make_sync_state(str(f), original_hash, original_mtime)
 
         # Modify the file (ensure mtime changes)

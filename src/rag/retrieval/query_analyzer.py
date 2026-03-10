@@ -19,23 +19,18 @@ def analyze_query(query: str) -> QueryAnalysis:
 
     # Broad queries: short, question-like, overview-seeking
     is_broad = len(words) <= 4 or any(
-        w.lower() in ("overview", "summary", "what", "describe", "explain")
-        for w in words
+        w.lower() in ("overview", "summary", "what", "describe", "explain") for w in words
     )
 
     # Extract folder hint (look for path-like patterns)
     folder_hint: str | None = None
-    folder_match = re.search(
-        r'(?:in|from|folder)\s+["\']?([/\w.-]+)["\']?', query, re.IGNORECASE
-    )
+    folder_match = re.search(r'(?:in|from|folder)\s+["\']?([/\w.-]+)["\']?', query, re.IGNORECASE)
     if folder_match:
         folder_hint = folder_match.group(1)
 
     # Extract date hint
     date_hint: str | None = None
-    date_match = re.search(
-        r"(?:since|after|before|from)\s+(\d{4}[-/]\d{2}(?:[-/]\d{2})?)", query
-    )
+    date_match = re.search(r"(?:since|after|before|from)\s+(\d{4}[-/]\d{2}(?:[-/]\d{2})?)", query)
     if date_match:
         date_hint = date_match.group(1)
 

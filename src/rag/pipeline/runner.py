@@ -75,19 +75,21 @@ class PipelineRunner:
             existing_sync = self._db.get_sync_state(file_path)
             sync_id = existing_sync.id if existing_sync else str(uuid.uuid4())
             retry_count = existing_sync.retry_count if existing_sync else 0
-            self._db.upsert_sync_state(SyncStateRow(
-                id=sync_id,
-                file_path=file_path,
-                file_name=path.name,
-                folder_path=folder_path,
-                folder_ancestors=folder_ancestors,
-                file_type=event.file_type.value,
-                size_bytes=path.stat().st_size if path.exists() else None,
-                modified_at=event.modified_at,
-                content_hash=event.content_hash,
-                process_status="processing",
-                retry_count=retry_count,
-            ))
+            self._db.upsert_sync_state(
+                SyncStateRow(
+                    id=sync_id,
+                    file_path=file_path,
+                    file_name=path.name,
+                    folder_path=folder_path,
+                    folder_ancestors=folder_ancestors,
+                    file_type=event.file_type.value,
+                    size_bytes=path.stat().st_size if path.exists() else None,
+                    modified_at=event.modified_at,
+                    content_hash=event.content_hash,
+                    process_status="processing",
+                    retry_count=retry_count,
+                )
+            )
 
             # 1. Classify
             classification = classify(file_path, folder_path)
@@ -114,18 +116,20 @@ class PipelineRunner:
             )
             if canonical is not None:
                 doc_id = str(uuid.uuid4())
-                self._db.upsert_document(DocumentRow(
-                    doc_id=doc_id,
-                    file_path=file_path,
-                    folder_path=folder_path,
-                    folder_ancestors=folder_ancestors,
-                    title=parsed_doc.title,
-                    file_type=event.file_type.value,
-                    modified_at=event.modified_at,
-                    raw_content_hash=normalized.raw_content_hash,
-                    normalized_content_hash=normalized.normalized_content_hash,
-                    duplicate_of_doc_id=canonical,
-                ))
+                self._db.upsert_document(
+                    DocumentRow(
+                        doc_id=doc_id,
+                        file_path=file_path,
+                        folder_path=folder_path,
+                        folder_ancestors=folder_ancestors,
+                        title=parsed_doc.title,
+                        file_type=event.file_type.value,
+                        modified_at=event.modified_at,
+                        raw_content_hash=normalized.raw_content_hash,
+                        normalized_content_hash=normalized.normalized_content_hash,
+                        duplicate_of_doc_id=canonical,
+                    )
+                )
                 self._update_sync_status(file_path, "done")
                 details = f"duplicate of {canonical}"
                 self._log(doc_id, file_path, "dedup", "duplicate", start, details)
@@ -135,25 +139,29 @@ class PipelineRunner:
 
             # 5. Register hash for future dedup
             self._dedup.register_hash(
-                file_path, normalized.raw_content_hash,
-                normalized.normalized_content_hash, doc_id,
+                file_path,
+                normalized.raw_content_hash,
+                normalized.normalized_content_hash,
+                doc_id,
             )
 
             # 6. Save document metadata
-            self._db.upsert_document(DocumentRow(
-                doc_id=doc_id,
-                file_path=file_path,
-                folder_path=folder_path,
-                folder_ancestors=folder_ancestors,
-                title=parsed_doc.title,
-                file_type=event.file_type.value,
-                modified_at=event.modified_at,
-                raw_content_hash=normalized.raw_content_hash,
-                normalized_content_hash=normalized.normalized_content_hash,
-                ocr_required=1 if parsed_doc.ocr_required else 0,
-                ocr_confidence=parsed_doc.ocr_confidence,
-                embedding_model_version=self._embedder.model_version,
-            ))
+            self._db.upsert_document(
+                DocumentRow(
+                    doc_id=doc_id,
+                    file_path=file_path,
+                    folder_path=folder_path,
+                    folder_ancestors=folder_ancestors,
+                    title=parsed_doc.title,
+                    file_type=event.file_type.value,
+                    modified_at=event.modified_at,
+                    raw_content_hash=normalized.raw_content_hash,
+                    normalized_content_hash=normalized.normalized_content_hash,
+                    ocr_required=1 if parsed_doc.ocr_required else 0,
+                    ocr_confidence=parsed_doc.ocr_confidence,
+                    embedding_model_version=self._embedder.model_version,
+                )
+            )
 
             # 7. Save sections
             section_rows = [
@@ -199,29 +207,31 @@ class PipelineRunner:
             # 11. Build VectorPoints and upsert
             points: list[VectorPoint] = []
             for chunk, vector in zip(chunks, vectors, strict=True):
-                points.append(VectorPoint(
-                    point_id=chunk.chunk_id,
-                    vector=vector,
-                    payload=QdrantPayloadModel(
-                        record_type=RecordType.CHUNK,
-                        doc_id=doc_id,
-                        section_id=chunk.section_id,
-                        chunk_id=chunk.chunk_id,
-                        title=parsed_doc.title or path.stem,
-                        file_path=file_path,
-                        folder_path=folder_path,
-                        folder_ancestors=folder_ancestors,
-                        file_type=event.file_type,
-                        modified_at=event.modified_at,
-                        page_start=chunk.page_start,
-                        page_end=chunk.page_end,
-                        section_heading=chunk.section_heading,
-                        chunk_order=chunk.chunk_order,
-                        token_count=chunk.token_count,
-                        citation_label=chunk.citation_label,
-                        text=chunk.text,
-                    ),
-                ))
+                points.append(
+                    VectorPoint(
+                        point_id=chunk.chunk_id,
+                        vector=vector,
+                        payload=QdrantPayloadModel(
+                            record_type=RecordType.CHUNK,
+                            doc_id=doc_id,
+                            section_id=chunk.section_id,
+                            chunk_id=chunk.chunk_id,
+                            title=parsed_doc.title or path.stem,
+                            file_path=file_path,
+                            folder_path=folder_path,
+                            folder_ancestors=folder_ancestors,
+                            file_type=event.file_type,
+                            modified_at=event.modified_at,
+                            page_start=chunk.page_start,
+                            page_end=chunk.page_end,
+                            section_heading=chunk.section_heading,
+                            chunk_order=chunk.chunk_order,
+                            token_count=chunk.token_count,
+                            citation_label=chunk.citation_label,
+                            text=chunk.text,
+                        ),
+                    )
+                )
 
             if points:
                 self._vector_store.upsert_points(doc_id, points)
@@ -259,43 +269,45 @@ class PipelineRunner:
         """Mark file as deleted in sync_state and remove vectors from Qdrant."""
         existing = self._db.get_sync_state(event.file_path)
         if existing:
-            self._db.upsert_sync_state(SyncStateRow(
-                id=existing.id,
-                file_path=existing.file_path,
-                file_name=existing.file_name,
-                folder_path=existing.folder_path,
-                folder_ancestors=existing.folder_ancestors,
-                file_type=existing.file_type,
-                modified_at=existing.modified_at,
-                content_hash=existing.content_hash,
-                process_status="done",
-                is_deleted=1,
-            ))
+            self._db.upsert_sync_state(
+                SyncStateRow(
+                    id=existing.id,
+                    file_path=existing.file_path,
+                    file_name=existing.file_name,
+                    folder_path=existing.folder_path,
+                    folder_ancestors=existing.folder_ancestors,
+                    file_type=existing.file_type,
+                    modified_at=existing.modified_at,
+                    content_hash=existing.content_hash,
+                    process_status="done",
+                    is_deleted=1,
+                )
+            )
             doc = self._db.get_document_by_hash(existing.content_hash)
             if doc:
                 self._vector_store.delete_stale_points(doc.doc_id, set())
 
-    def _update_sync_status(
-        self, file_path: str, status: str, error: str | None = None
-    ) -> None:
+    def _update_sync_status(self, file_path: str, status: str, error: str | None = None) -> None:
         existing = self._db.get_sync_state(file_path)
         if existing:
             retry = existing.retry_count + (1 if status == "error" else 0)
             final_status = "poison" if status == "error" and retry >= 3 else status
-            self._db.upsert_sync_state(SyncStateRow(
-                id=existing.id,
-                file_path=existing.file_path,
-                file_name=existing.file_name,
-                folder_path=existing.folder_path,
-                folder_ancestors=existing.folder_ancestors,
-                file_type=existing.file_type,
-                modified_at=existing.modified_at,
-                content_hash=existing.content_hash,
-                process_status=final_status,
-                error_message=error,
-                retry_count=retry,
-                is_deleted=existing.is_deleted,
-            ))
+            self._db.upsert_sync_state(
+                SyncStateRow(
+                    id=existing.id,
+                    file_path=existing.file_path,
+                    file_name=existing.file_name,
+                    folder_path=existing.folder_path,
+                    folder_ancestors=existing.folder_ancestors,
+                    file_type=existing.file_type,
+                    modified_at=existing.modified_at,
+                    content_hash=existing.content_hash,
+                    process_status=final_status,
+                    error_message=error,
+                    retry_count=retry,
+                    is_deleted=existing.is_deleted,
+                )
+            )
 
     def _compute_ancestors(self, folder_path: str) -> list[str]:
         """Compute folder ancestor paths."""
@@ -315,11 +327,13 @@ class PipelineRunner:
         details: str,
     ) -> None:
         duration = int((time.monotonic() - start) * 1000)
-        self._db.log_processing(ProcessingLogEntry(
-            doc_id=doc_id,
-            file_path=file_path,
-            stage=stage,
-            status=status,
-            duration_ms=duration,
-            details=details,
-        ))
+        self._db.log_processing(
+            ProcessingLogEntry(
+                doc_id=doc_id,
+                file_path=file_path,
+                stage=stage,
+                status=status,
+                duration_ms=duration,
+                details=details,
+            )
+        )

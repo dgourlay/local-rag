@@ -45,14 +45,10 @@ class TestExactDuplicateSuppressed:
             with_payload=True,
         )
         orig_points = [
-            p
-            for p in points
-            if p.payload and p.payload.get("doc_id") == orig_row["doc_id"]
+            p for p in points if p.payload and p.payload.get("doc_id") == orig_row["doc_id"]
         ]
         dup_points = [
-            p
-            for p in points
-            if p.payload and p.payload.get("doc_id") == dup_row["doc_id"]
+            p for p in points if p.payload and p.payload.get("doc_id") == dup_row["doc_id"]
         ]
         assert len(orig_points) > 0
         assert len(dup_points) == 0

@@ -30,15 +30,11 @@ def rrf_fuse(
     hit_map: dict[str, SearchHit] = {}
 
     for rank, hit in enumerate(dense_hits):
-        scores[hit.point_id] = scores.get(hit.point_id, 0.0) + 1.0 / (
-            RRF_K + rank + 1
-        )
+        scores[hit.point_id] = scores.get(hit.point_id, 0.0) + 1.0 / (RRF_K + rank + 1)
         hit_map[hit.point_id] = hit
 
     for rank, hit in enumerate(keyword_hits):
-        scores[hit.point_id] = scores.get(hit.point_id, 0.0) + 1.0 / (
-            RRF_K + rank + 1
-        )
+        scores[hit.point_id] = scores.get(hit.point_id, 0.0) + 1.0 / (RRF_K + rank + 1)
         if hit.point_id not in hit_map:
             hit_map[hit.point_id] = hit
 
@@ -136,9 +132,7 @@ class RetrievalEngine:
 
         # 6. Rerank
         t0 = time.monotonic()
-        reranked = self._reranker.rerank(
-            query, fused[: self._top_k_candidates], effective_top_k
-        )
+        reranked = self._reranker.rerank(query, fused[: self._top_k_candidates], effective_top_k)
         if debug:
             debug_info["rerank_ms"] = int((time.monotonic() - t0) * 1000)
 

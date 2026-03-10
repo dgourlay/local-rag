@@ -54,13 +54,15 @@ def _parse_in_subprocess(
             if "heading" in label.lower():
                 # Flush previous section
                 if current_text_parts:
-                    sections.append({
-                        "heading": current_heading,
-                        "order": order,
-                        "text": "\n".join(current_text_parts),
-                        "page_start": current_page_start,
-                        "page_end": current_page_end,
-                    })
+                    sections.append(
+                        {
+                            "heading": current_heading,
+                            "order": order,
+                            "text": "\n".join(current_text_parts),
+                            "page_start": current_page_start,
+                            "page_end": current_page_end,
+                        }
+                    )
                     order += 1
                 current_heading = text
                 current_text_parts = []
@@ -71,40 +73,44 @@ def _parse_in_subprocess(
 
         # Flush last section
         if current_text_parts:
-            sections.append({
-                "heading": current_heading,
-                "order": order,
-                "text": "\n".join(current_text_parts),
-                "page_start": current_page_start,
-                "page_end": current_page_end,
-            })
+            sections.append(
+                {
+                    "heading": current_heading,
+                    "order": order,
+                    "text": "\n".join(current_text_parts),
+                    "page_start": current_page_start,
+                    "page_end": current_page_end,
+                }
+            )
 
         # If no sections extracted, treat whole doc as one section
         if not sections:
-            full_text = (
-                doc.export_to_text()
-                if hasattr(doc, "export_to_text")
-                else str(doc)
+            full_text = doc.export_to_text() if hasattr(doc, "export_to_text") else str(doc)
+            sections.append(
+                {
+                    "heading": None,
+                    "order": 0,
+                    "text": full_text,
+                    "page_start": None,
+                    "page_end": None,
+                }
             )
-            sections.append({
-                "heading": None,
-                "order": 0,
-                "text": full_text,
-                "page_start": None,
-                "page_end": None,
-            })
 
         title = getattr(doc, "name", None) or Path(file_path).stem
-        result_queue.put({
-            "status": "success",
-            "sections": sections,
-            "title": title,
-        })
+        result_queue.put(
+            {
+                "status": "success",
+                "sections": sections,
+                "title": title,
+            }
+        )
     except Exception as e:
-        result_queue.put({
-            "status": "error",
-            "error": str(e),
-        })
+        result_queue.put(
+            {
+                "status": "error",
+                "error": str(e),
+            }
+        )
 
 
 _SUBPROCESS_TIMEOUT_SECONDS = 300
@@ -117,14 +123,10 @@ class DoclingParser:
     def supported_types(self) -> set[FileType]:
         return {FileType.PDF, FileType.DOCX}
 
-    def parse(
-        self, file_path: str, ocr_enabled: bool
-    ) -> ParseSuccess | ParseError:
+    def parse(self, file_path: str, ocr_enabled: bool) -> ParseSuccess | ParseError:
         path = Path(file_path)
         if not path.is_file():
-            return ParseError(
-                error=f"File not found: {file_path}", file_path=file_path
-            )
+            return ParseError(error=f"File not found: {file_path}", file_path=file_path)
 
         # Compute content hash
         h = hashlib.sha256()
@@ -152,9 +154,7 @@ class DoclingParser:
             )
 
         if result_queue.empty():
-            return ParseError(
-                error="Subprocess returned no result", file_path=file_path
-            )
+            return ParseError(error="Subprocess returned no result", file_path=file_path)
 
         result: dict[str, Any] = result_queue.get()
         if result["status"] == "error":
