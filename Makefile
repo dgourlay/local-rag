@@ -1,20 +1,28 @@
-.PHONY: lint test test-e2e test-all format setup qdrant-up qdrant-down download-models
+.PHONY: lint test test-e2e test-all format install setup qdrant-up qdrant-down download-models
+
+# --- Development ---
 
 lint:
-	ruff check src/ tests/
-	ruff format --check src/ tests/
-	mypy --strict src/
+	.venv/bin/ruff check src/ tests/
+	.venv/bin/ruff format --check src/ tests/
+	.venv/bin/mypy --strict src/
 
 format:
-	ruff format src/ tests/
+	.venv/bin/ruff format src/ tests/
 
 test:
-	pytest tests/ -k "not e2e" -x -q
+	.venv/bin/pytest tests/ -k "not e2e" -x -q
 
 test-e2e:
-	pytest tests/e2e/ -v
+	.venv/bin/pytest tests/e2e/ -v
 
 test-all: lint test test-e2e
+
+# --- Setup ---
+
+install:
+	python3 -m venv .venv
+	.venv/bin/pip install -e ".[dev]"
 
 qdrant-up:
 	docker compose up -d
@@ -25,7 +33,10 @@ qdrant-down:
 download-models:
 	bash scripts/download-models.sh
 
-setup: qdrant-up download-models
+setup: install qdrant-up
 	@echo ""
-	@echo "Setup complete. Run 'rag init' to configure folders and LLM CLI,"
-	@echo "then 'rag index' to index your documents."
+	@echo "Setup complete. Next steps:"
+	@echo "  1. source .venv/bin/activate"
+	@echo "  2. rag init          # configure folders"
+	@echo "  3. rag index         # index documents (downloads models on first run)"
+	@echo "  4. rag search \"test\" # verify it works"

@@ -1,52 +1,45 @@
 # dropbox-rag configuration
-# Copy to ~/.config/dropbox-rag/config.toml and edit
+# Copy to ~/.config/dropbox-rag/config.toml and edit, or run `rag init`.
 
 [folders]
-# Directories to index (absolute paths)
-paths = [
-    "~/Documents",
-    "~/Dropbox",
-]
+# Required: directories to index (supports ~ for home)
+paths = ["~/Documents", "~/Dropbox"]
+# extensions = ["pdf", "docx", "txt", "md"]
+# ignore = ["**/node_modules", "**/.git", "**/venv", "**/__pycache__"]
 
-[database]
-# SQLite database path
-path = "~/.local/share/dropbox-rag/rag.db"
+# All sections below are optional -- defaults shown as comments.
 
-[qdrant]
-# Qdrant server connection
-host = "localhost"
-port = 6333
-collection = "documents"
+# [database]
+# path = "~/.local/share/dropbox-rag/metadata.db"
 
-[embedding]
-# BGE-M3 embedding model
-model = "BAAI/bge-m3"
-dimensions = 1024
-device = "cpu"  # or "mps" for Apple Silicon
+# [qdrant]
+# url = "http://localhost:6333"
+# collection = "documents"
 
-[reranker]
-# ONNX cross-encoder reranker
-model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-top_k = 10
+# [embedding]
+# model = "BAAI/bge-m3"
+# dimensions = 1024
+# batch_size = 32
+# cache_dir = "~/.cache/dropbox-rag/models"
 
-[summarization]
-# CLI tool for summarization (must accept stdin)
-command = "claude"
-args = ["--print"]
+# [reranker]
+# model_path = "~/.cache/dropbox-rag/models/bge-reranker-v2-m3"
+# top_k_candidates = 30
+# top_k_final = 10
 
-[mcp]
-# MCP server transport
-transport = "stdio"  # or "streamable-http"
-host = "127.0.0.1"
-port = 8080
+# [summarization]
+# enabled = true
+# command = "claude"
+# args = ["--print", "--max-tokens", "2048"]
+# timeout_seconds = 60
 
-[watcher]
-# Filesystem watcher settings
-debounce_seconds = 5
-ignore_patterns = [
-    "*.tmp",
-    "*.swp",
-    ".DS_Store",
-    "node_modules",
-    ".git",
-]
+# [mcp]
+# transport = "stdio"
+# host = "127.0.0.1"
+# port = 8080
+
+# [watcher]
+# poll_interval_seconds = 5
+# debounce_seconds = 2
+# use_polling = false
+# batch_window_seconds = 10

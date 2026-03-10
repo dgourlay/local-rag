@@ -29,6 +29,7 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.8.0",
     "pydantic[mypy]",
+    "optimum[onnxruntime]",
 ]
 
 [project.scripts]
@@ -41,7 +42,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["onnxruntime.*", "transformers.*"]
+module = ["onnxruntime.*", "transformers.*", "optimum.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

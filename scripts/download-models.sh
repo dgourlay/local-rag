@@ -3,10 +3,21 @@
 # Download and export the BGE reranker model to ONNX format.
 # Idempotent -- skips export if the model already exists.
 #
-# The BGE-M3 embedding model (~1.5GB) is NOT handled here; it downloads
-# automatically on first use via sentence-transformers.
+# Note: The reranker also auto-exports on first search if optimum is installed.
+# This script is for pre-downloading so the first search is fast.
 
 set -euo pipefail
+
+# Use venv python if available, otherwise system python
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
+if [ -f "${PROJECT_DIR}/.venv/bin/python" ]; then
+    PYTHON="${PROJECT_DIR}/.venv/bin/python"
+    PIP="${PROJECT_DIR}/.venv/bin/pip"
+else
+    PYTHON="python3"
+    PIP="pip3"
+fi
 
 MODEL_DIR="${HOME}/.cache/dropbox-rag/models/bge-reranker-v2-m3"
 MODEL_FILE="${MODEL_DIR}/model.onnx"
@@ -27,9 +38,9 @@ echo "Reranker ONNX model not found. Exporting from HuggingFace..."
 echo ""
 
 # Check if optimum is available; install if not
-if ! python3 -c "import optimum" 2>/dev/null; then
+if ! "${PYTHON}" -c "import optimum" 2>/dev/null; then
     echo "Installing optimum[onnxruntime] (required for ONNX export)..."
-    pip install "optimum[onnxruntime]"
+    "${PIP}" install "optimum[onnxruntime]"
     echo ""
 fi
 
@@ -37,9 +48,12 @@ echo "Exporting BAAI/bge-reranker-v2-m3 to ONNX format..."
 echo "This may take a few minutes on first run."
 echo ""
 
-python3 -c "
+"${PYTHON}" -c "
 from optimum.onnxruntime import ORTModelForSequenceClassification
 from transformers import AutoTokenizer
+import logging
+
+logging.getLogger('transformers.tokenization_utils_base').setLevel(logging.ERROR)
 
 print('Downloading and converting model...')
 model = ORTModelForSequenceClassification.from_pretrained(
@@ -59,6 +73,3 @@ print('Done.')
 echo ""
 echo "Reranker model exported successfully to:"
 echo "  ${MODEL_DIR}/"
-echo ""
-echo "You can verify the model exists:"
-echo "  ls -lh ${MODEL_FILE}"
