@@ -24,10 +24,10 @@ class FoldersConfig(BaseModel):
 class DatabaseConfig(BaseModel):
     path: Path = Path("~/.local/share/dropbox-rag/metadata.db")
 
-    @field_validator("path", mode="before")
-    @classmethod
-    def expand_path(cls, v: str | Path) -> Path:
-        return Path(v).expanduser().resolve()
+    @model_validator(mode="after")
+    def expand_paths(self) -> DatabaseConfig:
+        object.__setattr__(self, "path", Path(self.path).expanduser().resolve())
+        return self
 
 
 class QdrantConfig(BaseModel):
@@ -41,10 +41,10 @@ class EmbeddingConfig(BaseModel):
     batch_size: int = 32
     cache_dir: Path = Path("~/.cache/dropbox-rag/models")
 
-    @field_validator("cache_dir", mode="before")
-    @classmethod
-    def expand_cache_dir(cls, v: str | Path) -> Path:
-        return Path(v).expanduser().resolve()
+    @model_validator(mode="after")
+    def expand_paths(self) -> EmbeddingConfig:
+        object.__setattr__(self, "cache_dir", Path(self.cache_dir).expanduser().resolve())
+        return self
 
 
 class RerankerConfig(BaseModel):
@@ -52,13 +52,9 @@ class RerankerConfig(BaseModel):
     top_k_candidates: int = 30
     top_k_final: int = 10
 
-    @field_validator("model_path", mode="before")
-    @classmethod
-    def expand_model_path(cls, v: str | Path) -> Path:
-        return Path(v).expanduser().resolve()
-
     @model_validator(mode="after")
-    def validate_top_k(self) -> RerankerConfig:
+    def validate_and_expand(self) -> RerankerConfig:
+        object.__setattr__(self, "model_path", Path(self.model_path).expanduser().resolve())
         if self.top_k_final > self.top_k_candidates:
             msg = (
                 f"top_k_final ({self.top_k_final}) must be "

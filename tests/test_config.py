@@ -77,6 +77,7 @@ class TestLoadConfig:
     ) -> None:
         monkeypatch.delenv("RAG_CONFIG_PATH", raising=False)
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
         with pytest.raises(FileNotFoundError, match="No config file found"):
             load_config()
 

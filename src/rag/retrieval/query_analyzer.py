@@ -22,9 +22,21 @@ def analyze_query(query: str) -> QueryAnalysis:
         w.lower() in ("overview", "summary", "what", "describe", "explain") for w in words
     )
 
-    # Extract folder hint (look for path-like patterns)
+    # Extract folder hint (look for path-like patterns or quoted folder names)
     folder_hint: str | None = None
-    folder_match = re.search(r'(?:in|from|folder)\s+["\']?([/\w.-]+)["\']?', query, re.IGNORECASE)
+    # Match explicit "in folder X", "from folder X", or path-like values containing /
+    folder_match = re.search(
+        r'(?:in\s+folder|from\s+folder|folder)\s+["\']?([/\w.-]+)["\']?',
+        query,
+        re.IGNORECASE,
+    )
+    if not folder_match:
+        # Match "in/from" only when followed by a path (contains /)
+        folder_match = re.search(
+            r'(?:in|from)\s+["\']?([/\w.-]*[/][/\w.-]*)["\']?',
+            query,
+            re.IGNORECASE,
+        )
     if folder_match:
         folder_hint = folder_match.group(1)
 
