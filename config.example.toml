@@ -1,0 +1,52 @@
+# dropbox-rag configuration
+# Copy to ~/.config/dropbox-rag/config.toml and edit
+
+[folders]
+# Directories to index (absolute paths)
+paths = [
+    "~/Documents",
+    "~/Dropbox",
+]
+
+[database]
+# SQLite database path
+path = "~/.local/share/dropbox-rag/rag.db"
+
+[qdrant]
+# Qdrant server connection
+host = "localhost"
+port = 6333
+collection = "documents"
+
+[embedding]
+# BGE-M3 embedding model
+model = "BAAI/bge-m3"
+dimensions = 1024
+device = "cpu"  # or "mps" for Apple Silicon
+
+[reranker]
+# ONNX cross-encoder reranker
+model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+top_k = 10
+
+[summarization]
+# CLI tool for summarization (must accept stdin)
+command = "claude"
+args = ["--print"]
+
+[mcp]
+# MCP server transport
+transport = "stdio"  # or "streamable-http"
+host = "127.0.0.1"
+port = 8080
+
+[watcher]
+# Filesystem watcher settings
+debounce_seconds = 5
+ignore_patterns = [
+    "*.tmp",
+    "*.swp",
+    ".DS_Store",
+    "node_modules",
+    ".git",
+]
