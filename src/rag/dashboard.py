@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
+import os
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -97,7 +101,7 @@ def _check_mcp_config(path: Path) -> bool:
         return False
 
 
-def _detect_mcp_clients() -> str:
+def _detect_mcp_clients() -> list[str]:
     """Detect which LLM clients have dropbox-rag MCP configured."""
     desktop_path = "~/Library/Application Support/Claude/claude_desktop_config.json"
     checks: list[tuple[str, Path]] = [
@@ -110,10 +114,75 @@ def _detect_mcp_clients() -> str:
     for label, path in checks:
         if path.is_file() and _check_mcp_config(path):
             found.append(label)
+    return found
 
-    if found:
-        return "[green]configured[/]  (" + ", ".join(found) + ")"
-    return "[yellow]not configured[/]  (run rag mcp-config --install)"
+
+def _check_rag_direct(config: AppConfig) -> tuple[bool, str]:
+    """Try a direct RAG search to verify the pipeline works."""
+    try:
+        from rag.db.connection import get_connection
+        from rag.db.migrations import run_migrations
+        from rag.db.models import SqliteMetadataDB
+        from rag.db.qdrant import QdrantVectorStore
+        from rag.pipeline.embedder import SentenceTransformerEmbedder
+        from rag.retrieval.citations import CitationAssembler
+        from rag.retrieval.engine import RetrievalEngine
+        from rag.retrieval.reranker import OnnxReranker
+
+        conn = get_connection(config.database.path)
+        run_migrations(conn)
+        db = SqliteMetadataDB(conn)
+        vector_store = QdrantVectorStore(config.qdrant)
+        vector_store.ensure_collection()
+        embedder = SentenceTransformerEmbedder(config.embedding)
+        reranker = OnnxReranker(config.reranker)
+        citations = CitationAssembler(db)
+        engine = RetrievalEngine(
+            vector_store=vector_store,
+            embedder=embedder,
+            reranker=reranker,
+            citation_assembler=citations,
+        )
+
+        t0 = time.monotonic()
+        engine.search("test", top_k=1)
+        elapsed = int((time.monotonic() - t0) * 1000)
+        return True, f"{elapsed}ms"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}"
+
+
+async def _check_mcp_server() -> tuple[bool, str]:
+    """Spawn an MCP server subprocess and verify it responds."""
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "rag.cli", "serve"],
+    )
+
+    try:
+        async with asyncio.timeout(15):
+            devnull = open(os.devnull, "w")  # noqa: SIM115
+            try:
+                async with (
+                    stdio_client(params, errlog=devnull) as (
+                        read_stream,
+                        write_stream,
+                    ),
+                    ClientSession(read_stream, write_stream) as session,
+                ):
+                    await session.initialize()
+                    result = await session.list_tools()
+                    tool_count = len(result.tools)
+                    return True, f"{tool_count} tools"
+            finally:
+                devnull.close()
+    except TimeoutError:
+        return False, "timeout"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}"
 
 
 def render_dashboard(conn: sqlite3.Connection, config: AppConfig) -> None:
@@ -231,15 +300,31 @@ def render_dashboard(conn: sqlite3.Connection, config: AppConfig) -> None:
 
     # MCP client detection
     mcp_clients = _detect_mcp_clients()
+    mcp_config_str = (
+        "[green]configured[/]  (" + ", ".join(mcp_clients) + ")"
+        if mcp_clients
+        else "[yellow]not configured[/]"
+    )
+
+    # Liveness checks (RAG direct + MCP server)
+    console.print("[dim]Running liveness checks...[/]", end="")
+    rag_ok, rag_detail = _check_rag_direct(config)
+    rag_status = f"[green]ok[/]  ({rag_detail})" if rag_ok else f"[red]fail[/]  ({rag_detail})"
+
+    mcp_ok, mcp_detail = asyncio.run(_check_mcp_server())
+    mcp_status = f"[green]ok[/]  ({mcp_detail})" if mcp_ok else f"[red]fail[/]  ({mcp_detail})"
+    # Clear the "Running liveness checks..." line
+    console.print("\r" + " " * 40 + "\r", end="")
 
     # System health panel
     health_lines = [
         "[bold]System Health[/]",
         "",
-        f"  Qdrant:    {qdrant_status}  ({qdrant_points} vectors)",
-        f"  Database:  [green]ok[/]  ({_sizeof_fmt(db_size)})",
-        f"  MCP:       {mcp_clients}",
-        "  Config:    ~/.config/dropbox-rag/config.toml",
+        f"  Qdrant:      {qdrant_status}  ({qdrant_points} vectors)",
+        f"  Database:    [green]ok[/]  ({_sizeof_fmt(db_size)})",
+        f"  RAG Search:  {rag_status}",
+        f"  MCP Server:  {mcp_status}",
+        f"  MCP Config:  {mcp_config_str}",
     ]
     health_content = "\n".join(health_lines)
 
