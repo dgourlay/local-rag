@@ -22,7 +22,8 @@ test-all: lint test test-e2e
 
 install:
 	python3 -m venv .venv
-	.venv/bin/pip install -e ".[dev]"
+	.venv/bin/pip install -q --upgrade pip
+	.venv/bin/pip install -q -e ".[dev]"
 
 qdrant-up:
 	docker compose up -d
@@ -33,10 +34,24 @@ qdrant-down:
 download-models:
 	bash scripts/download-models.sh
 
-setup: install qdrant-up
+setup: install
 	@echo ""
-	@echo "Setup complete. Next steps:"
-	@echo "  1. source .venv/bin/activate"
-	@echo "  2. rag init          # configure folders"
-	@echo "  3. rag index         # index documents (downloads models on first run)"
-	@echo "  4. rag search \"test\" # verify it works"
+	@if docker info >/dev/null 2>&1; then \
+		$(MAKE) qdrant-up; \
+		echo ""; \
+		echo "Setup complete. Next steps:"; \
+		echo "  1. source .venv/bin/activate"; \
+		echo "  2. rag init          # configure folders"; \
+		echo "  3. rag index         # index documents (downloads models on first run)"; \
+		echo "  4. rag search \"test\" # verify it works"; \
+	else \
+		echo "Python environment ready, but Docker is not running."; \
+		echo "Qdrant (via Docker) is required for indexing and search."; \
+		echo ""; \
+		echo "Next steps:"; \
+		echo "  1. Install/start Docker Desktop: https://docs.docker.com/get-docker/"; \
+		echo "  2. make qdrant-up    # start Qdrant"; \
+		echo "  3. source .venv/bin/activate"; \
+		echo "  4. rag init          # configure folders"; \
+		echo "  5. rag index         # index documents"; \
+	fi
