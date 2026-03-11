@@ -401,11 +401,12 @@ function Detail({ comp }) {
 
 export default function App() {
   const [sel, setSel] = useState(null);
-  const [tab, setTab] = useState("arch");
+  const [tab, setTab] = useState("overview");
   const [expandedTool, setExpandedTool] = useState(null);
   const [expandedCmd, setExpandedCmd] = useState(null);
 
   const tabs = [
+    { id: "overview", label: "Overview" },
     { id: "arch", label: "Architecture" },
     { id: "pipeline", label: "Processing Pipeline" },
     { id: "retrieval", label: "Retrieval Engine" },
@@ -484,36 +485,347 @@ export default function App() {
         </div>
 
         {/* Architecture tab */}
-        {tab === "arch" && (
+        {/* Overview tab */}
+        {tab === "overview" && (
           <div>
+            {/* Hero */}
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gap: 10,
+                background: `linear-gradient(135deg, ${C.accentDim}, ${C.surface})`,
+                border: `1px solid ${C.borderActive}`,
+                borderRadius: 12,
+                padding: "28px 28px 24px",
                 marginBottom: 16,
               }}
             >
-              {Object.entries(components).map(([id, comp]) => (
-                <Card
-                  key={id}
-                  comp={comp}
-                  isSelected={sel === id}
-                  onClick={() => setSel(sel === id ? null : id)}
-                />
-              ))}
+              <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 6 }}>
+                Your documents, searchable by AI — entirely local.
+              </div>
+              <div style={{ color: C.muted, fontSize: 13, lineHeight: 1.6, maxWidth: 720 }}>
+                dropbox-rag indexes your local documents (PDF, DOCX, TXT, MD), builds a
+                hybrid search index with dense vectors and keyword search, and exposes
+                retrieval as MCP tools — so Claude Desktop, Claude Code, and Kiro can
+                search your files as naturally as browsing the web. No cloud. No API keys
+                for core search. Everything runs on your machine.
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+                <a
+                  href="https://github.com/dgourlay/dropbox-rag"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    background: C.accent,
+                    color: "#fff",
+                    padding: "8px 18px",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    textDecoration: "none",
+                    fontFamily: mono,
+                  }}
+                >
+                  GitHub Repository
+                </a>
+                <span
+                  onClick={() => setTab("cli")}
+                  style={{
+                    background: C.surface,
+                    color: C.accent,
+                    border: `1px solid ${C.borderActive}`,
+                    padding: "8px 18px",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontFamily: mono,
+                  }}
+                >
+                  CLI Reference →
+                </span>
+              </div>
             </div>
-            {/* One empty cell to balance the 7-item grid */}
-            <Detail comp={sel ? components[sel] : null} />
 
-            {/* Data flow */}
+            {/* Quick start */}
             <div
               style={{
-                marginTop: 16,
                 background: C.surface,
                 border: `1px solid ${C.border}`,
                 borderRadius: 8,
                 padding: 16,
+                marginBottom: 16,
+              }}
+            >
+              <div
+                style={{
+                  color: C.green,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 12,
+                }}
+              >
+                Quick Start
+              </div>
+              <div
+                style={{
+                  fontFamily: mono,
+                  fontSize: 12,
+                  color: C.muted,
+                  lineHeight: 1.8,
+                  background: C.bg,
+                  padding: 14,
+                  borderRadius: 6,
+                  whiteSpace: "pre",
+                  overflowX: "auto",
+                }}
+              >
+{`git clone git@github.com:dgourlay/dropbox-rag.git
+cd dropbox-rag
+make setup              # creates venv, installs deps, starts Qdrant
+source .venv/bin/activate
+rag init                # interactive wizard: pick folders, detect LLM CLI
+rag index               # scans, parses, chunks, embeds (models download on first run)
+rag search "your query" # test it from the terminal`}
+              </div>
+            </div>
+
+            {/* Why this exists */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 12,
+                marginBottom: 16,
+              }}
+            >
+              {[
+                {
+                  icon: "🔒",
+                  title: "Fully Private",
+                  desc: "All models run locally. Your documents never leave your machine. No cloud APIs needed for core search and retrieval.",
+                  color: C.green,
+                },
+                {
+                  icon: "🧠",
+                  title: "Production-Grade Retrieval",
+                  desc: "Not toy search. 3-lane prefetch across a summary pyramid, RRF fusion, intelligent query classification, ONNX cross-encoder reranking.",
+                  color: C.purple,
+                },
+                {
+                  icon: "📄",
+                  title: "Multi-Format Parsing",
+                  desc: "PDF (with OCR), DOCX, TXT, and Markdown. Docling parser runs in a subprocess for memory isolation. Handles scanned documents.",
+                  color: C.amber,
+                },
+                {
+                  icon: "🔄",
+                  title: "Always Current",
+                  desc: "Filesystem watcher auto-indexes on changes. Content-hash dedup skips unchanged files. Re-index a single file or everything.",
+                  color: C.cyan,
+                },
+                {
+                  icon: "💰",
+                  title: "$0 Infrastructure",
+                  desc: "Single Python process + Qdrant Docker container. No AWS, no subscriptions. One-time model download (~2.7GB) and you're set.",
+                  color: C.green,
+                },
+                {
+                  icon: "✨",
+                  title: "Smart Summaries",
+                  desc: "Pluggable LLM summarizer generates a 3-level document pyramid (phrase → sentence → paragraph) plus section summaries for better ranking.",
+                  color: C.rose,
+                },
+              ].map((item, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 8,
+                    padding: "14px 16px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 18 }}>{item.icon}</span>
+                    <span style={{ color: item.color, fontWeight: 700, fontSize: 13, fontFamily: mono }}>
+                      {item.title}
+                    </span>
+                  </div>
+                  <div style={{ color: C.muted, fontSize: 11, lineHeight: 1.5 }}>{item.desc}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* MCP Integration callout */}
+            <div
+              style={{
+                background: `linear-gradient(135deg, ${C.accentDim}, ${C.purpleDim})`,
+                border: `1px solid ${C.borderActive}`,
+                borderRadius: 10,
+                padding: "20px 22px",
+                marginBottom: 16,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <span style={{ fontSize: 24 }}>🔌</span>
+                <div>
+                  <div style={{ color: C.accent, fontWeight: 700, fontSize: 15, fontFamily: mono }}>
+                    MCP Integration
+                  </div>
+                  <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>
+                    Model Context Protocol — the bridge between your documents and your AI
+                  </div>
+                </div>
+              </div>
+              <div style={{ color: C.text, fontSize: 12, lineHeight: 1.6, marginBottom: 14 }}>
+                dropbox-rag runs as an MCP tool server. Once connected, Claude can search your
+                documents, get document summaries, expand context around results, and check
+                indexing health — all through natural conversation. No manual copy-paste, no
+                file uploads, no context window limits.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                {[
+                  { client: "Claude Code", setup: "rag mcp-config --install claude-code", icon: "⌨️" },
+                  { client: "Claude Desktop", setup: "rag mcp-config --install claude-desktop", icon: "🖥️" },
+                  { client: "Kiro", setup: "rag mcp-config --install kiro", icon: "🚀" },
+                ].map((c, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 6,
+                      padding: "10px 12px",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      <span style={{ fontSize: 14 }}>{c.icon}</span>
+                      <span style={{ color: C.text, fontWeight: 600, fontSize: 12 }}>{c.client}</span>
+                    </div>
+                    <div
+                      style={{
+                        fontFamily: mono,
+                        fontSize: 10,
+                        color: C.accent,
+                        background: C.bg,
+                        padding: "4px 8px",
+                        borderRadius: 4,
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      $ {c.setup}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ color: C.muted, fontSize: 11, marginTop: 12, lineHeight: 1.5 }}>
+                After setup, just ask your AI: <em style={{ color: C.text }}>"Search my documents for gate operations"</em> — it
+                calls <code style={{ fontFamily: mono, color: C.accent, fontSize: 10 }}>search_documents</code> automatically
+                and returns cited evidence with file paths, sections, and page numbers.
+              </div>
+            </div>
+
+            {/* Prerequisites + stats */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div
+                style={{
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  padding: 14,
+                }}
+              >
+                <div
+                  style={{
+                    color: C.amber,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                    marginBottom: 10,
+                  }}
+                >
+                  Prerequisites
+                </div>
+                {[
+                  { name: "Python 3.11+", note: "Runtime" },
+                  { name: "Docker", note: "For Qdrant container" },
+                  { name: "4GB+ RAM", note: "For embedding + reranker models" },
+                  { name: "macOS or Linux", note: "Platform" },
+                ].map((p, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "5px 8px",
+                      background: i % 2 === 0 ? C.bg : "transparent",
+                      borderRadius: 3,
+                    }}
+                  >
+                    <span style={{ color: C.text, fontSize: 12, fontFamily: mono }}>{p.name}</span>
+                    <span style={{ color: C.muted, fontSize: 11 }}>{p.note}</span>
+                  </div>
+                ))}
+              </div>
+              <div
+                style={{
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  padding: 14,
+                }}
+              >
+                <div
+                  style={{
+                    color: C.cyan,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                    marginBottom: 10,
+                  }}
+                >
+                  At a Glance
+                </div>
+                {[
+                  { label: "Embedding Model", val: "BGE-M3 (1024-dim, ~1.5GB)" },
+                  { label: "Reranker", val: "bge-reranker-v2-m3 (ONNX, ~1.2GB)" },
+                  { label: "Chunk Size", val: "512 tokens, 64-token overlap" },
+                  { label: "Supported Formats", val: "PDF, DOCX, TXT, MD" },
+                  { label: "MCP Tools", val: "5 tools" },
+                  { label: "Monthly Cost", val: "$0" },
+                ].map((s, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "5px 8px",
+                      background: i % 2 === 0 ? C.bg : "transparent",
+                      borderRadius: 3,
+                    }}
+                  >
+                    <span style={{ color: C.muted, fontSize: 11 }}>{s.label}</span>
+                    <span style={{ color: C.text, fontSize: 11, fontFamily: mono, fontWeight: 600 }}>{s.val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "arch" && (
+          <div>
+            {/* Data flow */}
+            <div
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: 16,
+                marginBottom: 16,
               }}
             >
               <div
@@ -580,6 +892,26 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* Component cards */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: 10,
+                marginBottom: 16,
+              }}
+            >
+              {Object.entries(components).map(([id, comp]) => (
+                <Card
+                  key={id}
+                  comp={comp}
+                  isSelected={sel === id}
+                  onClick={() => setSel(sel === id ? null : id)}
+                />
+              ))}
+            </div>
+            <Detail comp={sel ? components[sel] : null} />
 
             {/* Quick stats */}
             <div
