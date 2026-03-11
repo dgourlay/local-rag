@@ -54,20 +54,82 @@ make download-models
 
 ## MCP Integration
 
-The main use case is as an MCP tool server for Claude Desktop or Claude Code.
+The main use case is as an MCP tool server so Claude can search your documents.
+
+### Claude Code
+
+**Option A -- auto-install:**
 
 ```bash
-# Auto-install into Claude Desktop or Claude Code
-rag mcp-config --install claude-desktop
 rag mcp-config --install claude-code
-
-# Or view the JSON config to add manually
-rag mcp-config --print
 ```
 
-After installing, restart Claude Desktop. It launches `rag serve` automatically
-and gains access to 4 tools: `search_documents`, `get_document_context`,
-`list_recent_documents`, `get_sync_status`.
+**Option B -- manual:** Add this to your `~/.claude.json` (or project-level
+`.mcp.json`), replacing the Python path with your venv path:
+
+```json
+{
+  "mcpServers": {
+    "dropbox-rag": {
+      "command": "/path/to/dropbox-rag/.venv/bin/python",
+      "args": ["-m", "rag.cli", "serve"]
+    }
+  }
+}
+```
+
+To find your exact Python path, run `rag mcp-config --print`.
+
+After adding the config, restart Claude Code. The tools will be available
+immediately -- Claude will automatically use them when you ask about your
+documents.
+
+### Claude Desktop
+
+**Option A -- auto-install:**
+
+```bash
+rag mcp-config --install claude-desktop
+```
+
+This writes to `~/Library/Application Support/Claude/claude_desktop_config.json`.
+
+**Option B -- manual:** Open Claude Desktop settings, go to Developer > MCP
+Servers, and add:
+
+```json
+{
+  "dropbox-rag": {
+    "command": "/path/to/dropbox-rag/.venv/bin/python",
+    "args": ["-m", "rag.cli", "serve"]
+  }
+}
+```
+
+Restart Claude Desktop after adding the config.
+
+### Available MCP tools
+
+Once connected, your LLM has access to these tools:
+
+| Tool | Description |
+|---|---|
+| `search_documents` | Hybrid search with reranking. Accepts `query`, optional `folder_filter`, `date_filter`, `top_k`. Returns cited evidence passages with scores. |
+| `get_document_context` | Get document overview (summary + sections) by `doc_id`, or a chunk with surrounding context by `chunk_id`. |
+| `list_recent_documents` | List recently indexed documents, optionally filtered by folder. |
+| `get_sync_status` | Check indexing health: total files, indexed count, errors, per-folder breakdown. |
+
+### Verifying the connection
+
+After setup, ask Claude something like:
+
+> "What documents do I have indexed?" (uses `list_recent_documents`)
+>
+> "Search my documents for gate operations procedures" (uses `search_documents`)
+
+If Claude responds with content from your documents, the MCP connection is
+working. If not, check `rag doctor` and verify the Python path in your MCP
+config points to the correct venv.
 
 
 ## CLI Reference
