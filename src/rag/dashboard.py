@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -84,6 +85,35 @@ def _shorten_path(path: str) -> str:
     """Replace home directory with ~ for display."""
     home = str(Path.home())
     return path.replace(home, "~") if path.startswith(home) else path
+
+
+def _check_mcp_config(path: Path) -> bool:
+    """Check if a config file has dropbox-rag in its mcpServers."""
+    try:
+        data = json.loads(path.read_text())
+        servers = data.get("mcpServers", {})
+        return "dropbox-rag" in servers
+    except Exception:
+        return False
+
+
+def _detect_mcp_clients() -> str:
+    """Detect which LLM clients have dropbox-rag MCP configured."""
+    desktop_path = "~/Library/Application Support/Claude/claude_desktop_config.json"
+    checks: list[tuple[str, Path]] = [
+        ("Claude Code", Path("~/.claude.json").expanduser()),
+        ("Claude Desktop", Path(desktop_path).expanduser()),
+        ("Kiro", Path("~/.kiro/settings/mcp.json").expanduser()),
+    ]
+
+    found: list[str] = []
+    for label, path in checks:
+        if path.is_file() and _check_mcp_config(path):
+            found.append(label)
+
+    if found:
+        return "[green]configured[/]  (" + ", ".join(found) + ")"
+    return "[yellow]not configured[/]  (run rag mcp-config --install)"
 
 
 def render_dashboard(conn: sqlite3.Connection, config: AppConfig) -> None:
@@ -199,12 +229,16 @@ def render_dashboard(conn: sqlite3.Connection, config: AppConfig) -> None:
     if error_files:
         progress_content.append(f"{error_files} errors", style="red")
 
+    # MCP client detection
+    mcp_clients = _detect_mcp_clients()
+
     # System health panel
     health_lines = [
         "[bold]System Health[/]",
         "",
         f"  Qdrant:    {qdrant_status}  ({qdrant_points} vectors)",
         f"  Database:  [green]ok[/]  ({_sizeof_fmt(db_size)})",
+        f"  MCP:       {mcp_clients}",
         "  Config:    ~/.config/dropbox-rag/config.toml",
     ]
     health_content = "\n".join(health_lines)
