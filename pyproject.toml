@@ -20,6 +20,7 @@ dependencies = [
     "mcp>=1.25,<2",
     "pydantic>=2.0",
     "click>=8.0",
+    "rich>=13.0",
     "tomli>=2.0; python_version < '3.11'",
 ]
 
@@ -42,7 +43,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["onnxruntime.*", "transformers.*", "optimum.*"]
+module = ["onnxruntime.*", "transformers.*", "optimum.*", "rich.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

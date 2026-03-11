@@ -379,25 +379,24 @@ def status(as_json: bool) -> None:
 
     conn = get_connection(config.database.path)
     run_migrations(conn)
-    db = SqliteMetadataDB(conn)
-
-    doc_count = db.get_document_count()
-    chunk_count = db.get_chunk_count()
-    error_count = db.get_error_count()
-
-    # Folder breakdown
-    folder_rows = conn.execute(
-        """SELECT
-            folder_path,
-            COUNT(*) AS file_count,
-            SUM(CASE WHEN process_status = 'done' THEN 1 ELSE 0 END) AS indexed_count,
-            SUM(CASE WHEN process_status = 'error' THEN 1 ELSE 0 END) AS error_count
-        FROM sync_state
-        WHERE NOT is_deleted
-        GROUP BY folder_path"""
-    ).fetchall()
 
     if as_json:
+        db = SqliteMetadataDB(conn)
+        doc_count = db.get_document_count()
+        chunk_count = db.get_chunk_count()
+        error_count = db.get_error_count()
+
+        folder_rows = conn.execute(
+            """SELECT
+                folder_path,
+                COUNT(*) AS file_count,
+                SUM(CASE WHEN process_status = 'done' THEN 1 ELSE 0 END) AS indexed_count,
+                SUM(CASE WHEN process_status = 'error' THEN 1 ELSE 0 END) AS error_count
+            FROM sync_state
+            WHERE NOT is_deleted
+            GROUP BY folder_path"""
+        ).fetchall()
+
         data = {
             "documents": doc_count,
             "chunks": chunk_count,
@@ -414,13 +413,9 @@ def status(as_json: bool) -> None:
         }
         click.echo(json.dumps(data, indent=2))
     else:
-        click.echo(f"Documents: {doc_count}")
-        click.echo(f"Chunks:    {chunk_count}")
-        click.echo(f"Errors:    {error_count}")
-        if folder_rows:
-            click.echo("\nPer-folder breakdown:")
-            for row in folder_rows:
-                click.echo(f"  {row[0]}: {row[1]} files, {row[2]} indexed, {row[3]} errors")
+        from rag.dashboard import render_dashboard
+
+        render_dashboard(conn, config)
 
 
 @main.command()
