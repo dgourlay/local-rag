@@ -1,0 +1,1379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Local RAG Architecture</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0f1a; }
+    code { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+    const { useState } = React;
+
+const C = {
+  bg: "#0a0f1a",
+  surface: "#111827",
+  border: "#1e3a5f",
+  borderActive: "#3b82f6",
+  text: "#e2e8f0",
+  muted: "#94a3b8",
+  accent: "#3b82f6",
+  accentDim: "#1e3a5f",
+  green: "#22c55e",
+  greenDim: "#0a3d1f",
+  amber: "#f59e0b",
+  amberDim: "#3d2e0a",
+  purple: "#a855f7",
+  purpleDim: "#2d1a4e",
+  red: "#ef4444",
+  redDim: "#3d0a0a",
+  cyan: "#06b6d4",
+  cyanDim: "#0a2d3d",
+  rose: "#f43f5e",
+  roseDim: "#3d0a1a",
+};
+
+const mono = "'JetBrains Mono', 'Fira Code', monospace";
+
+const components = {
+  scanner: {
+    label: "Filesystem Scanner",
+    icon: "📂",
+    color: C.green,
+    dim: C.greenDim,
+    desc: "Watchdog + full scan indexing",
+    details: {
+      purpose:
+        "Detect new, modified, and deleted files from configured local folders. Supports full scan (rag index) and live watching (rag watch) with debounced event batching.",
+      how: [
+        "Walk configured folder paths, filter by extension whitelist",
+        "Classify file type: PDF, DOCX, TXT, MD",
+        "SHA-256 content hash for change detection",
+        "Mtime pre-filter: skip unchanged files (same mtime → skip)",
+        "Watchdog observer for live rag watch mode with debounce",
+        "--reindex all: purge + re-process with confirmation prompt",
+        "--reindex /path: clear + re-process a single indexed file",
+      ],
+      config: [
+        "Extensions: .pdf, .docx, .txt, .md (configurable)",
+        "Ignore patterns: node_modules, .git, venv, __pycache__",
+        "Config: ~/.config/dropbox-rag/config.toml",
+        "Watcher: configurable poll interval and debounce",
+      ],
+      tech: "Python 3.11+ · watchdog · SHA-256 · TOML config",
+    },
+  },
+  pipeline: {
+    label: "Processing Pipeline",
+    icon: "⚙",
+    color: C.amber,
+    dim: C.amberDim,
+    desc: "Classify → Parse → Normalize → Dedup → Chunk → Embed → Summarize → Index",
+    details: {
+      purpose:
+        "12-stage pipeline transforms raw files into searchable chunks with embeddings and summaries. Each file processed atomically with error handling and retry logic.",
+      how: [
+        "Docling parser: PDF + DOCX with OCR routing (subprocess isolation)",
+        "Text parser fallback: TXT + MD files",
+        "Normalization: whitespace, paragraph reflow, content hashing",
+        "Dedup: SHA-256 exact + normalized hash (cross-file duplicate detection)",
+        "Chunking: 512-token, 64-token overlap, heading-boundary aware",
+        "Embedding: local BGE-M3, batched, 1024-dim vectors",
+        "Summarization: LLM CLI (claude/kiro) for doc + section summaries",
+      ],
+      config: [
+        "Docling runs in child subprocess for memory isolation",
+        "3-level summary pyramid: L1 phrase, L2 sentence, L3 paragraph",
+        "Section summaries with doc context",
+        "Deterministic UUID5 point IDs for overwrite semantics",
+        "Retry with exponential backoff, poison after 3 failures",
+      ],
+      tech: "Docling · tiktoken · sentence-transformers · BGE-M3",
+    },
+  },
+  summarizer: {
+    label: "LLM Summarizer",
+    icon: "✦",
+    color: C.rose,
+    dim: C.roseDim,
+    desc: "CLI-based doc + section summaries",
+    details: {
+      purpose:
+        "Generate structured summaries by shelling out to a user-configured LLM CLI tool. Creates the summary pyramid that powers intelligent retrieval ranking.",
+      how: [
+        "Shells out to configured CLI (claude --print, kiro-cli, etc.)",
+        "Document summaries: L1 phrase, L2 sentence, L3 paragraph, topics, doc_type",
+        "Section summaries: per-section 1-2 sentence summary",
+        "JSON extraction: direct parse → markdown fences → brace extraction",
+        "Retry once on failure with 2× timeout",
+        "Large prompts (>5000 chars) written to temp file",
+        "Strips CLAUDECODE env var to prevent nested session issues",
+      ],
+      config: [
+        "Provider: cli (configurable command + args)",
+        "Default: claude --print (60s timeout)",
+        "Summary vectors stored as document_summary and section_summary",
+        "Cached by normalized_content_hash (skip if unchanged)",
+        "Graceful degradation: system works without summaries",
+      ],
+      tech: "subprocess · configurable CLI · JSON extraction · Pydantic validation",
+    },
+  },
+  qdrant: {
+    label: "Qdrant",
+    icon: "◆",
+    color: C.purple,
+    dim: C.purpleDim,
+    desc: "Single collection · 3 record types · hybrid search",
+    details: {
+      purpose:
+        "Store and search dense vectors with full payload metadata. Single 'documents' collection with record_type field distinguishing chunks, document summaries, and section summaries.",
+      how: [
+        "Dense: 1024-dim cosine similarity (BGE-M3)",
+        "Keyword: built-in text index for BM25-equivalent search",
+        "3 record types: chunk, document_summary, section_summary",
+        "Payload indices: folder, file_type, record_type, modified_at",
+        "query_points() API for all searches (not deprecated search())",
+        "Deterministic UUID5 point IDs: upsert overwrites, no delete+reinsert",
+      ],
+      config: [
+        "Docker: qdrant/qdrant:v1.17 on localhost:6333",
+        "Collection: 'documents', cosine distance",
+        "Point ID format: UUID5(doc_id:section:chunk_order)",
+        "Stale point cleanup per doc_id on re-index",
+      ],
+      tech: "qdrant/qdrant:v1.17 Docker · qdrant-client · AsyncQdrantClient",
+    },
+  },
+  retrieval: {
+    label: "Retrieval Engine",
+    icon: "🔍",
+    color: C.red,
+    dim: C.redDim,
+    desc: "3-lane prefetch → RRF → layer weighting → recency → rerank",
+    details: {
+      purpose:
+        "Multi-stage hybrid retrieval with intelligent query classification, 3-lane prefetch across the summary pyramid, RRF fusion, and ONNX cross-encoder reranking.",
+      how: [
+        "Query analysis: classify as broad or specific; extract folder hints",
+        "3-lane prefetch: doc_summary (top 20), section_summary (top 20), chunks (top 30)",
+        "Keyword search: BM25-equivalent across chunks",
+        "RRF fusion: score = Σ 1/(60 + rank) across dense + keyword",
+        "Layer weighting: broad boosts summaries (×1.5/×1.3), specific penalizes (×0.7/×0.9)",
+        "Recency boost: 90-day half-life exponential decay, max 30% influence",
+        "Cross-encoder rerank: bge-reranker-v2-m3 (ONNX), top 30 → top 10",
+      ],
+      config: [
+        "Citation assembly: file path, section heading, page numbers",
+        "Context expansion: fetch adjacent chunks by doc_id + order",
+        "Debug mode: per-stage timing, lane counts, weight breakdown",
+        "LLM-friendly text output grouped by document with summaries",
+      ],
+      tech: "bge-reranker-v2-m3 ONNX · ~100ms/30 candidates",
+    },
+  },
+  mcp: {
+    label: "MCP Server",
+    icon: "🔌",
+    color: C.accent,
+    dim: C.accentDim,
+    desc: "stdio + HTTP · 5 tools for Claude",
+    details: {
+      purpose:
+        "Expose retrieval as MCP tools for Claude Desktop, Claude Code, and Kiro. Runs as stdio subprocess (default) or Streamable HTTP server.",
+      how: [
+        "search_documents: full hybrid retrieval, format=text|json",
+        "quick_search: lightweight doc-level scan (titles, summaries, topics)",
+        "get_document_context: doc overview or chunk with surrounding context",
+        "list_recent_documents: browse recently indexed files by folder",
+        "get_sync_status: indexing health, file counts, error breakdown",
+      ],
+      config: [
+        "Transport: stdio (default, Claude Desktop) or Streamable HTTP",
+        "Lazy component init: models loaded on first tool call",
+        "Async handlers with asyncio.to_thread() for CPU-bound ops",
+        "check_same_thread=False for SQLite in async context",
+        "rag mcp-config --print for client configuration snippet",
+      ],
+      tech: "mcp>=1.25 SDK · stdio + Streamable HTTP · async Python",
+    },
+  },
+  sqlite: {
+    label: "SQLite Metadata",
+    icon: "🗃",
+    color: C.cyan,
+    dim: C.cyanDim,
+    desc: "WAL mode · sync state · docs · chunks · sections",
+    details: {
+      purpose:
+        "Track all document metadata, processing state, chunks, sections, summaries, and dedup hashes. Single file database with WAL mode for concurrent read access.",
+      how: [
+        "sync_state: file path, mtime, content hash, process status",
+        "documents: doc metadata, summaries (L1/L2/L3), topics, dedup refs",
+        "chunks: chunk text, normalized text, token count, section/page info",
+        "sections: headings, order, page ranges, section summaries",
+        "document_hashes: raw + normalized hash → canonical doc_id",
+        "processing_log: stage timing, error tracking, audit trail",
+      ],
+      config: [
+        "Path: ~/.local/share/dropbox-rag/metadata.db",
+        "WAL mode, busy_timeout=30000ms",
+        "check_same_thread=False for MCP async access",
+        "Migration system: versioned SQL schema files",
+        "UUIDs stored as TEXT, timestamps ISO 8601",
+      ],
+      tech: "sqlite3 · WAL mode · Pydantic row models",
+    },
+  },
+};
+
+const pipelineStages = [
+  { id: "1", label: "Classify", desc: "File type detection + OCR routing", cat: "parse" },
+  { id: "2", label: "Parse", desc: "Docling (PDF/DOCX subprocess) or text fallback", cat: "parse" },
+  { id: "3", label: "Normalize", desc: "Whitespace cleanup, paragraph reflow, hashing", cat: "parse" },
+  { id: "4", label: "Dedup", desc: "SHA-256 exact + normalized hash check", cat: "parse" },
+  { id: "5", label: "Register Hash", desc: "Store hashes for future dedup", cat: "index" },
+  { id: "6", label: "Save Document", desc: "Upsert document metadata to SQLite", cat: "index" },
+  { id: "7", label: "Save Sections", desc: "Store section headings + page ranges", cat: "index" },
+  { id: "8", label: "Chunk", desc: "512-token chunks, 64-token overlap, heading-aware", cat: "index" },
+  { id: "9", label: "Save Chunks", desc: "Store chunk text + metadata to SQLite", cat: "index" },
+  { id: "10", label: "Embed", desc: "BGE-M3 batch encoding → 1024-dim vectors", cat: "embed" },
+  { id: "11", label: "Index Vectors", desc: "Upsert chunk points to Qdrant + cleanup stale", cat: "embed" },
+  { id: "12", label: "Summarize", desc: "LLM CLI → doc + section summaries → embed → Qdrant", cat: "embed" },
+];
+const stageCatColors = { parse: C.green, index: C.amber, embed: C.purple };
+
+const mcpTools = [
+  {
+    name: "search_documents",
+    desc: "Full hybrid retrieval with cross-encoder reranking",
+    params: "query, folder_filter?, date_filter?, top_k?, debug?, format?",
+    detail: "3-lane prefetch → RRF fusion → layer weighting → recency boost → rerank → cited evidence. Default text format groups results by document with summaries.",
+  },
+  {
+    name: "quick_search",
+    desc: "Lightweight document-level overview scan",
+    params: "query, folder_filter?, top_k?",
+    detail: "Returns document titles, L1/L2 summaries, key topics, and doc types. Use for broad exploration before drilling into search_documents.",
+  },
+  {
+    name: "get_document_context",
+    desc: "Expand context around a document or chunk",
+    params: "doc_id?, chunk_id?, window?",
+    detail: "With doc_id: returns document overview (summaries + section list). With chunk_id: returns chunk text plus adjacent chunks within window.",
+  },
+  {
+    name: "list_recent_documents",
+    desc: "Browse recently indexed files",
+    params: "folder_filter?, limit?",
+    detail: "Returns documents sorted by modification date with titles, types, and modification timestamps. Optionally filtered by folder path.",
+  },
+  {
+    name: "get_sync_status",
+    desc: "System health and processing stats",
+    params: "(none)",
+    detail: "Returns total files, indexed count, pending count, error count, and per-folder breakdown with status counts.",
+  },
+];
+
+const cliCommands = [
+  { cmd: "rag init", desc: "Interactive setup wizard", detail: "Configure folders, LLM CLI, Qdrant connection, file extensions, and generate MCP config for Claude Desktop/Code." },
+  { cmd: "rag index", desc: "Full scan + process all documents", detail: "Walks configured folders, detects new/modified files by mtime + hash, runs the 12-stage pipeline." },
+  { cmd: "rag index --reindex", desc: "Purge all + re-process", detail: "Clears all index data (with confirmation prompt) then re-processes every file from scratch." },
+  { cmd: "rag index --reindex FILE", desc: "Re-process single file", detail: "Clears index state for one file and re-processes it. Errors if the file isn't already indexed." },
+  { cmd: "rag serve", desc: "Start MCP server (stdio)", detail: "Launches the MCP server for Claude Desktop or Claude Code. Use --http for Streamable HTTP transport." },
+  { cmd: "rag watch", desc: "Live filesystem watcher", detail: "Watchdog-based observer that auto-indexes files on create/modify/delete with configurable debounce." },
+  { cmd: "rag status", desc: "Rich terminal dashboard", detail: "Documents, chunks, vectors, per-folder breakdown, recent documents table, MCP health checks, RAG liveness test." },
+  { cmd: "rag doctor", desc: "Health check", detail: "Validates config, Qdrant connectivity, embedding model cache, folder accessibility, and OCR availability." },
+  { cmd: "rag search \"query\"", desc: "CLI search for testing", detail: "Runs the full retrieval pipeline from the terminal. Supports --debug for stage timing and --top-k for result count." },
+  { cmd: "rag mcp-config --print", desc: "MCP config snippet", detail: "Prints the JSON config block to paste into Claude Desktop or Claude Code MCP settings." },
+];
+
+const retrievalStages = [
+  { step: "1", label: "Query Analysis", desc: "Classify broad vs specific, extract folder hints", color: C.cyan },
+  { step: "2", label: "Embed Query", desc: "BGE-M3 encode query → 1024-dim vector", color: C.green },
+  { step: "3", label: "3-Lane Prefetch", desc: "doc_summary (20) + section_summary (20) + chunks (30)", color: C.amber },
+  { step: "4", label: "Keyword Search", desc: "BM25-equivalent text search across chunks", color: C.amber },
+  { step: "5", label: "RRF Fusion", desc: "Reciprocal Rank Fusion: Σ 1/(60 + rank)", color: C.purple },
+  { step: "6", label: "Layer Weighting", desc: "Broad: ×1.5/×1.3/×1.0 · Specific: ×0.7/×0.9/×1.0", color: C.purple },
+  { step: "7", label: "Cross-Encoder Rerank", desc: "bge-reranker-v2-m3 ONNX, top 30 → top 10", color: C.red },
+  { step: "8", label: "Recency Boost", desc: "90-day half-life, max 30% exponential decay", color: C.red },
+  { step: "9", label: "Citations", desc: "Assemble file path, section, pages, doc summaries", color: C.accent },
+];
+
+function Card({ comp, isSelected, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        background: isSelected ? comp.dim : C.surface,
+        border: `1px solid ${isSelected ? comp.color : C.border}`,
+        borderRadius: 8,
+        padding: "12px 14px",
+        cursor: "pointer",
+        transition: "all 0.15s",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
+        <span style={{ fontSize: 16 }}>{comp.icon}</span>
+        <span style={{ color: comp.color, fontWeight: 600, fontSize: 13, fontFamily: mono }}>
+          {comp.label}
+        </span>
+      </div>
+      <div style={{ color: C.muted, fontSize: 11, lineHeight: 1.4 }}>{comp.desc}</div>
+    </div>
+  );
+}
+
+function Detail({ comp }) {
+  if (!comp)
+    return (
+      <div
+        style={{
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
+          padding: 28,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: C.muted,
+          fontSize: 13,
+          minHeight: 280,
+          fontStyle: "italic",
+        }}
+      >
+        Select a component to see implementation details
+      </div>
+    );
+  const d = comp.details;
+  return (
+    <div
+      style={{
+        background: C.surface,
+        border: `1px solid ${comp.color}`,
+        borderRadius: 8,
+        padding: 20,
+        minHeight: 280,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <span style={{ fontSize: 22 }}>{comp.icon}</span>
+        <div>
+          <div style={{ color: comp.color, fontWeight: 700, fontSize: 16, fontFamily: mono }}>
+            {comp.label}
+          </div>
+          <div style={{ color: C.muted, fontSize: 11, marginTop: 1 }}>{d.tech}</div>
+        </div>
+      </div>
+      <div style={{ color: C.text, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>
+        {d.purpose}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        {[
+          ["How it works", d.how],
+          ["Configuration", d.config],
+        ].map(([title, items]) => (
+          <div key={title}>
+            <div
+              style={{
+                color: comp.color,
+                fontSize: 10,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+                marginBottom: 6,
+              }}
+            >
+              {title}
+            </div>
+            {items.map((m, i) => (
+              <div
+                key={i}
+                style={{
+                  color: C.muted,
+                  fontSize: 11,
+                  lineHeight: 1.45,
+                  marginBottom: 5,
+                  paddingLeft: 10,
+                  borderLeft: `2px solid ${comp.dim}`,
+                }}
+              >
+                {m}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+window.__App = function App() {
+  const [sel, setSel] = useState(null);
+  const [tab, setTab] = useState("arch");
+  const [expandedTool, setExpandedTool] = useState(null);
+  const [expandedCmd, setExpandedCmd] = useState(null);
+
+  const tabs = [
+    { id: "arch", label: "Architecture" },
+    { id: "pipeline", label: "Processing Pipeline" },
+    { id: "retrieval", label: "Retrieval Engine" },
+    { id: "mcp", label: "MCP Tools" },
+    { id: "cli", label: "CLI Reference" },
+  ];
+
+  return (
+    <div
+      style={{
+        background: C.bg,
+        color: C.text,
+        minHeight: "100vh",
+        fontFamily: "'Inter', -apple-system, sans-serif",
+        padding: "20px 24px",
+      }}
+    >
+      <div style={{ maxWidth: 920, margin: "0 auto" }}>
+        {/* Header */}
+        <div style={{ marginBottom: 22 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: 2,
+              color: C.accent,
+              marginBottom: 4,
+              fontFamily: mono,
+            }}
+          >
+            Implementation Reference
+          </div>
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5 }}>
+            Local RAG System
+          </h1>
+          <p style={{ color: C.muted, fontSize: 13, margin: "4px 0 0" }}>
+            Docling · BGE-M3 · Qdrant · SQLite · MCP for Claude Desktop & Claude Code
+          </p>
+        </div>
+
+        {/* Tab bar */}
+        <div
+          style={{
+            display: "flex",
+            gap: 2,
+            marginBottom: 20,
+            background: C.surface,
+            borderRadius: 8,
+            padding: 3,
+            width: "fit-content",
+          }}
+        >
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              style={{
+                background: tab === t.id ? C.accentDim : "transparent",
+                color: tab === t.id ? C.accent : C.muted,
+                border:
+                  tab === t.id
+                    ? `1px solid ${C.borderActive}`
+                    : "1px solid transparent",
+                borderRadius: 6,
+                padding: "6px 14px",
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Architecture tab */}
+        {tab === "arch" && (
+          <div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: 10,
+                marginBottom: 16,
+              }}
+            >
+              {Object.entries(components).map(([id, comp]) => (
+                <Card
+                  key={id}
+                  comp={comp}
+                  isSelected={sel === id}
+                  onClick={() => setSel(sel === id ? null : id)}
+                />
+              ))}
+            </div>
+            {/* One empty cell to balance the 7-item grid */}
+            <Detail comp={sel ? components[sel] : null} />
+
+            {/* Data flow */}
+            <div
+              style={{
+                marginTop: 16,
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: 16,
+              }}
+            >
+              <div
+                style={{
+                  color: C.accent,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 12,
+                }}
+              >
+                Data Flow
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  flexWrap: "wrap",
+                  justifyContent: "center",
+                }}
+              >
+                {[
+                  { label: "Local Files", color: C.green },
+                  { label: "→" },
+                  { label: "Scanner", color: C.green },
+                  { label: "→" },
+                  { label: "Pipeline", color: C.amber },
+                  { label: "→" },
+                  { label: "Summarizer", color: C.rose },
+                  { label: "→" },
+                  { label: "SQLite", color: C.cyan },
+                  { label: "+" },
+                  { label: "Qdrant", color: C.purple },
+                  { label: "→" },
+                  { label: "Retrieval", color: C.red },
+                  { label: "→" },
+                  { label: "MCP", color: C.accent },
+                  { label: "→" },
+                  { label: "Claude", color: C.text },
+                ].map((item, i) =>
+                  item.color ? (
+                    <span
+                      key={i}
+                      style={{
+                        background: item.color + "20",
+                        border: `1px solid ${item.color}50`,
+                        color: item.color,
+                        padding: "3px 10px",
+                        borderRadius: 4,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        fontFamily: mono,
+                      }}
+                    >
+                      {item.label}
+                    </span>
+                  ) : (
+                    <span key={i} style={{ color: C.muted, fontSize: 13 }}>
+                      {item.label}
+                    </span>
+                  )
+                )}
+              </div>
+            </div>
+
+            {/* Quick stats */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, 1fr)",
+                gap: 10,
+                marginTop: 16,
+              }}
+            >
+              {[
+                { label: "Embedding", val: "BGE-M3", sub: "1024-dim local" },
+                { label: "Reranker", val: "bge-reranker", sub: "ONNX · ~100ms" },
+                { label: "Summaries", val: "LLM CLI", sub: "3-level pyramid" },
+                { label: "Infrastructure", val: "$0/mo", sub: "Local · Docker" },
+              ].map((item, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 8,
+                    padding: "10px 12px",
+                  }}
+                >
+                  <div
+                    style={{
+                      color: C.muted,
+                      fontSize: 10,
+                      textTransform: "uppercase",
+                      letterSpacing: 1,
+                    }}
+                  >
+                    {item.label}
+                  </div>
+                  <div
+                    style={{
+                      color: C.text,
+                      fontSize: 14,
+                      fontWeight: 700,
+                      fontFamily: mono,
+                      marginTop: 3,
+                    }}
+                  >
+                    {item.val}
+                  </div>
+                  <div style={{ color: C.muted, fontSize: 10, marginTop: 1 }}>{item.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Pipeline tab */}
+        {tab === "pipeline" && (
+          <div>
+            <div
+              style={{
+                color: C.muted,
+                fontSize: 12,
+                marginBottom: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              Each file is processed through a 12-stage pipeline. Stages 1-4 parse and deduplicate,
+              5-9 store metadata in SQLite, and 10-12 create embeddings and summaries in Qdrant.
+              Failures are retried up to 3 times before marking as poison.
+            </div>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                marginBottom: 14,
+                flexWrap: "wrap",
+              }}
+            >
+              {Object.entries(stageCatColors).map(([k, v]) => (
+                <div key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <div
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      background: v,
+                    }}
+                  />
+                  <span
+                    style={{
+                      color: C.muted,
+                      fontSize: 11,
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {k === "parse"
+                      ? "Parse & Validate"
+                      : k === "index"
+                        ? "Store Metadata"
+                        : "Embed & Index"}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {pipelineStages.map((p) => (
+                <div
+                  key={p.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 6,
+                    padding: "9px 14px",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 32,
+                      minWidth: 32,
+                      height: 24,
+                      borderRadius: 4,
+                      background: stageCatColors[p.cat] + "20",
+                      border: `1.5px solid ${stageCatColors[p.cat]}`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 700,
+                      fontSize: 10,
+                      color: stageCatColors[p.cat],
+                      fontFamily: mono,
+                    }}
+                  >
+                    {p.id}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ color: C.text, fontSize: 13, fontWeight: 600 }}>
+                      {p.label}
+                    </span>
+                    <span style={{ color: C.muted, fontSize: 11, marginLeft: 8 }}>{p.desc}</span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: 0.5,
+                      color: stageCatColors[p.cat],
+                      background: stageCatColors[p.cat] + "15",
+                      padding: "2px 6px",
+                      borderRadius: 3,
+                    }}
+                  >
+                    {p.cat === "parse"
+                      ? "parse"
+                      : p.cat === "index"
+                        ? "store"
+                        : "embed"}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Summary pyramid */}
+            <div
+              style={{
+                marginTop: 16,
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: 16,
+              }}
+            >
+              <div
+                style={{
+                  color: C.purple,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 12,
+                }}
+              >
+                Summary Pyramid (per document)
+              </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {[
+                  {
+                    level: "L1",
+                    label: "Phrase",
+                    example: '"Driver rejection standard operating procedure"',
+                    width: "35%",
+                  },
+                  {
+                    level: "L2",
+                    label: "Sentence",
+                    example: "Outlines the procedure for handling driver rejections at yard gates.",
+                    width: "55%",
+                  },
+                  {
+                    level: "L3",
+                    label: "Paragraph",
+                    example:
+                      "Detailed summary covering key steps, responsibilities, and escalation paths. Embedded as document_summary vector in Qdrant.",
+                    width: "80%",
+                  },
+                  {
+                    level: "§",
+                    label: "Section Summaries",
+                    example:
+                      "Per-section 1-2 sentence summaries. Each embedded as section_summary vector.",
+                    width: "90%",
+                  },
+                  {
+                    level: "◼",
+                    label: "Chunks",
+                    example: "512-token chunks with 64-token overlap. Each embedded as chunk vector.",
+                    width: "100%",
+                  },
+                ].map((item, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      width: item.width,
+                      margin: "0 auto",
+                    }}
+                  >
+                    <div
+                      style={{
+                        minWidth: 28,
+                        height: 22,
+                        borderRadius: 4,
+                        background: C.purpleDim,
+                        border: `1px solid ${C.purple}50`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: C.purple,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        fontFamily: mono,
+                      }}
+                    >
+                      {item.level}
+                    </div>
+                    <div>
+                      <span
+                        style={{
+                          color: C.text,
+                          fontSize: 12,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                      <span style={{ color: C.muted, fontSize: 11, marginLeft: 8 }}>
+                        {item.example}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Retrieval tab */}
+        {tab === "retrieval" && (
+          <div>
+            <div
+              style={{
+                color: C.muted,
+                fontSize: 12,
+                marginBottom: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              9-stage retrieval pipeline. Broad queries (e.g. "what documents do we have about
+              safety?") boost summary layers. Specific queries (e.g. "what is the gate code for
+              building 7?") prioritize chunks. All stages run in ~200-400ms total.
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {retrievalStages.map((s) => (
+                <div
+                  key={s.step}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 6,
+                    padding: "10px 14px",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 28,
+                      minWidth: 28,
+                      height: 28,
+                      borderRadius: "50%",
+                      background: s.color + "20",
+                      border: `1.5px solid ${s.color}`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 700,
+                      fontSize: 11,
+                      color: s.color,
+                      fontFamily: mono,
+                    }}
+                  >
+                    {s.step}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: C.text, fontSize: 13, fontWeight: 600 }}>{s.label}</div>
+                    <div style={{ color: C.muted, fontSize: 11, marginTop: 1 }}>{s.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Layer weights comparison */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+                marginTop: 16,
+              }}
+            >
+              {[
+                {
+                  title: "Broad Query Weights",
+                  sub: '"What documents do we have about safety?"',
+                  weights: [
+                    { type: "document_summary", w: "×1.5", pct: 100 },
+                    { type: "section_summary", w: "×1.3", pct: 87 },
+                    { type: "chunk", w: "×1.0", pct: 67 },
+                  ],
+                  color: C.green,
+                },
+                {
+                  title: "Specific Query Weights",
+                  sub: '"What is the gate code for building 7?"',
+                  weights: [
+                    { type: "chunk", w: "×1.0", pct: 100 },
+                    { type: "section_summary", w: "×0.9", pct: 90 },
+                    { type: "document_summary", w: "×0.7", pct: 70 },
+                  ],
+                  color: C.amber,
+                },
+              ].map((panel, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 8,
+                    padding: 14,
+                  }}
+                >
+                  <div
+                    style={{
+                      color: panel.color,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      marginBottom: 2,
+                    }}
+                  >
+                    {panel.title}
+                  </div>
+                  <div
+                    style={{
+                      color: C.muted,
+                      fontSize: 10,
+                      marginBottom: 10,
+                      fontStyle: "italic",
+                    }}
+                  >
+                    {panel.sub}
+                  </div>
+                  {panel.weights.map((w, j) => (
+                    <div key={j} style={{ marginBottom: 6 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          marginBottom: 2,
+                        }}
+                      >
+                        <span style={{ color: C.muted, fontSize: 11 }}>{w.type}</span>
+                        <span
+                          style={{
+                            color: panel.color,
+                            fontWeight: 700,
+                            fontFamily: mono,
+                            fontSize: 11,
+                          }}
+                        >
+                          {w.w}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          background: C.bg,
+                          borderRadius: 3,
+                          height: 4,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            background: panel.color,
+                            height: "100%",
+                            width: `${w.pct}%`,
+                            borderRadius: 3,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* MCP Tools tab */}
+        {tab === "mcp" && (
+          <div>
+            <div
+              style={{
+                color: C.muted,
+                fontSize: 12,
+                marginBottom: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              5 MCP tools exposed via stdio (Claude Desktop, Claude Code) or Streamable HTTP.
+              Components are lazy-initialized on first tool call — model loading happens once, then
+              subsequent calls are fast.
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {mcpTools.map((tool, i) => (
+                <div
+                  key={i}
+                  onClick={() => setExpandedTool(expandedTool === i ? null : i)}
+                  style={{
+                    background: expandedTool === i ? C.accentDim : C.surface,
+                    border: `1px solid ${expandedTool === i ? C.borderActive : C.border}`,
+                    borderRadius: 8,
+                    padding: "12px 16px",
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div>
+                      <span
+                        style={{
+                          color: C.accent,
+                          fontWeight: 700,
+                          fontFamily: mono,
+                          fontSize: 13,
+                        }}
+                      >
+                        {tool.name}
+                      </span>
+                      <span style={{ color: C.muted, fontSize: 11, marginLeft: 10 }}>
+                        {tool.desc}
+                      </span>
+                    </div>
+                    <span style={{ color: C.muted, fontSize: 10 }}>
+                      {expandedTool === i ? "▲" : "▼"}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      color: C.muted,
+                      fontSize: 10,
+                      fontFamily: mono,
+                      marginTop: 4,
+                    }}
+                  >
+                    ({tool.params})
+                  </div>
+                  {expandedTool === i && (
+                    <div
+                      style={{
+                        color: C.text,
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                        marginTop: 10,
+                        paddingTop: 10,
+                        borderTop: `1px solid ${C.border}`,
+                      }}
+                    >
+                      {tool.detail}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Transport config */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+                marginTop: 16,
+              }}
+            >
+              {[
+                {
+                  transport: "stdio",
+                  label: "Default",
+                  desc: "MCP server runs as subprocess of Claude Desktop or Claude Code. No network configuration needed.",
+                  cmd: "rag serve",
+                },
+                {
+                  transport: "Streamable HTTP",
+                  label: "Alternative",
+                  desc: "HTTP server on localhost:8080. Useful for development, testing, and non-stdio MCP clients.",
+                  cmd: "rag serve --http",
+                },
+              ].map((t, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: i === 0 ? C.accentDim : C.surface,
+                    border: `1px solid ${i === 0 ? C.borderActive : C.border}`,
+                    borderRadius: 8,
+                    padding: 14,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span
+                      style={{ color: C.accent, fontWeight: 700, fontFamily: mono, fontSize: 13 }}
+                    >
+                      {t.transport}
+                    </span>
+                    {i === 0 && (
+                      <span style={{ color: C.green, fontSize: 10, fontWeight: 600 }}>
+                        RECOMMENDED
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ color: C.muted, fontSize: 11, marginTop: 6, lineHeight: 1.4 }}>
+                    {t.desc}
+                  </div>
+                  <div
+                    style={{
+                      color: C.text,
+                      fontFamily: mono,
+                      fontSize: 11,
+                      marginTop: 8,
+                      background: C.bg,
+                      padding: "4px 8px",
+                      borderRadius: 4,
+                    }}
+                  >
+                    $ {t.cmd}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* CLI Reference tab */}
+        {tab === "cli" && (
+          <div>
+            <div
+              style={{
+                color: C.muted,
+                fontSize: 12,
+                marginBottom: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              All commands available via the <code style={{ fontFamily: mono, color: C.accent }}>rag</code> CLI.
+              Install with <code style={{ fontFamily: mono, color: C.accent }}>pip install -e .</code> or{" "}
+              <code style={{ fontFamily: mono, color: C.accent }}>uv pip install -e .</code> to
+              register the entry point.
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {cliCommands.map((c, i) => (
+                <div
+                  key={i}
+                  onClick={() => setExpandedCmd(expandedCmd === i ? null : i)}
+                  style={{
+                    background: expandedCmd === i ? C.surface : C.surface,
+                    border: `1px solid ${expandedCmd === i ? C.green : C.border}`,
+                    borderRadius: 6,
+                    padding: "10px 14px",
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div>
+                      <span
+                        style={{
+                          color: C.green,
+                          fontWeight: 600,
+                          fontFamily: mono,
+                          fontSize: 12,
+                        }}
+                      >
+                        {c.cmd}
+                      </span>
+                      <span style={{ color: C.muted, fontSize: 11, marginLeft: 10 }}>
+                        {c.desc}
+                      </span>
+                    </div>
+                    <span style={{ color: C.muted, fontSize: 10 }}>
+                      {expandedCmd === i ? "▲" : "▼"}
+                    </span>
+                  </div>
+                  {expandedCmd === i && (
+                    <div
+                      style={{
+                        color: C.text,
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                        marginTop: 8,
+                        paddingTop: 8,
+                        borderTop: `1px solid ${C.border}`,
+                      }}
+                    >
+                      {c.detail}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Config file reference */}
+            <div
+              style={{
+                marginTop: 16,
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: 16,
+              }}
+            >
+              <div
+                style={{
+                  color: C.cyan,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 10,
+                }}
+              >
+                Configuration File
+              </div>
+              <div
+                style={{
+                  fontFamily: mono,
+                  fontSize: 11,
+                  color: C.muted,
+                  lineHeight: 1.6,
+                  background: C.bg,
+                  padding: 12,
+                  borderRadius: 6,
+                  whiteSpace: "pre",
+                }}
+              >
+{`# ~/.config/dropbox-rag/config.toml
+
+[folders]
+paths = ["/Users/me/Documents/work"]
+extensions = ["pdf", "docx", "txt", "md"]
+ignore = ["**/node_modules", "**/.git"]
+
+[summarization]
+enabled = true
+command = "claude"
+args = ["--print"]
+timeout_seconds = 60
+
+[qdrant]
+url = "http://localhost:6333"
+collection = "documents"
+
+[embedding]
+model = "BAAI/bge-m3"
+dimensions = 1024
+
+[reranker]
+top_k_candidates = 30
+top_k_final = 10
+
+[mcp]
+transport = "stdio"`}
+              </div>
+            </div>
+
+            {/* Prerequisites */}
+            <div
+              style={{
+                marginTop: 10,
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: 16,
+              }}
+            >
+              <div
+                style={{
+                  color: C.amber,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 10,
+                }}
+              >
+                Prerequisites
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {[
+                  { name: "Python 3.11+", note: "Runtime" },
+                  { name: "Docker", note: "For Qdrant container" },
+                  { name: "Qdrant v1.17", note: "docker run qdrant/qdrant" },
+                  { name: "claude CLI", note: "For summarization (optional)" },
+                ].map((p, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "6px 10px",
+                      background: C.bg,
+                      borderRadius: 4,
+                    }}
+                  >
+                    <span style={{ color: C.text, fontSize: 12, fontFamily: mono }}>{p.name}</span>
+                    <span style={{ color: C.muted, fontSize: 11 }}>{p.note}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+    const App = window.__App;
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(React.createElement(App));
+  </script>
+</body>
+</html>

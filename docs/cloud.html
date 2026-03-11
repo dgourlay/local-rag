@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloud RAG Architecture</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0f1a; }
+    code { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+    const { useState } = React;
+
+const C = {
+  bg: "#0a0f1a",
+  surface: "#111827",
+  border: "#1e3a5f",
+  borderActive: "#3b82f6",
+  text: "#e2e8f0",
+  muted: "#94a3b8",
+  accent: "#3b82f6",
+  accentDim: "#1e3a5f",
+  green: "#22c55e",
+  greenDim: "#0a3d1f",
+  amber: "#f59e0b",
+  amberDim: "#3d2e0a",
+  purple: "#a855f7",
+  purpleDim: "#2d1a4e",
+  red: "#ef4444",
+  redDim: "#3d0a0a",
+  cyan: "#06b6d4",
+  cyanDim: "#0a2d3d",
+};
+
+const mono = "'JetBrains Mono', 'Fira Code', monospace";
+
+const components = {
+  sync: {
+    label: "Dropbox Sync", icon: "↻", color: C.green, dim: C.greenDim,
+    desc: "Webhook + polling hybrid",
+    details: {
+      purpose: "Continuously detect new, modified, and deleted files from Dropbox via webhook notifications with 60s polling fallback.",
+      how: ["Webhook receiver (FastAPI) validates Dropbox challenge + HMAC signature", "Cursor-based delta fetch via /files/list_folder/continue", "60s poll fallback catches missed webhook notifications", "Downloads to /data/raw-files, records in sync_state table", "PostgreSQL LISTEN/NOTIFY to trigger pipeline worker"],
+      config: ["Filters: .pdf, .docx, .pptx, .txt, .md", "Uses Dropbox content_hash for change detection", "Handles deletes, moves, renames atomically", "Backfill mode for initial cold start"],
+      tech: "Python 3.12 · dropbox SDK · psycopg3 · FastAPI",
+    },
+  },
+  pipeline: {
+    label: "Processing Pipeline", icon: "⚙", color: C.amber, dim: C.amberDim,
+    desc: "Docling → Normalize → Dedup → Summarize → Chunk → Embed → Index",
+    details: {
+      purpose: "Parse documents locally with Docling, normalize, deduplicate, generate summaries via Haiku, chunk, embed via Titan, and index into Qdrant.",
+      how: ["Docling parser: PDF + DOCX with OCR routing for scanned pages", "Normalization: whitespace, header/footer suppression, paragraph reflow", "Dedup: SHA-256 exact + normalized hash (SimHash in Phase 4)", "Summaries: single structured Haiku call per doc and per section", "Chunking: 512-token, 64-token overlap, heading-boundary aware"],
+      config: ["Docling memory limit: 12 GB container cap", "3-level pyramid: L1 phrase, L2 sentence, L3 paragraph", "Summary caching by normalized_content_hash", "Deterministic chunk IDs via UUID5(doc_id + order)"],
+      tech: "Docling · Tesseract · tiktoken · boto3 (Bedrock) · Haiku",
+    },
+  },
+  qdrant: {
+    label: "Qdrant", icon: "◆", color: C.purple, dim: C.purpleDim,
+    desc: "Single collection · hybrid search",
+    details: {
+      purpose: "Store and search dense vectors with full payload metadata. Single collection with record_type field for all layers.",
+      how: ["Dense: 1024-dim cosine (Titan Embed v2)", "Keyword: built-in text index (BM25-equivalent) from v1", "Payload indices: folder, file_type, record_type, modified_at", "Prefetch API combines dense + keyword in one query"],
+      config: ["Image: qdrant/qdrant:v1.12", "Storage: gp3 EBS at /data/qdrant-storage", "Internal-only (port 6333, never exposed)", "Snapshot API for S3 backups"],
+      tech: "qdrant/qdrant:v1.12 · qdrant-client Python SDK",
+    },
+  },
+  retrieval: {
+    label: "Retrieval Engine", icon: "🔍", color: C.red, dim: C.redDim,
+    desc: "Dense + keyword → RRF → cross-encoder rerank",
+    details: {
+      purpose: "Multi-stage hybrid retrieval with intelligent layer weighting, RRF fusion, and cross-encoder reranking — all in v1.",
+      how: ["Query analysis: broad queries weight summaries; specific weight chunks", "Parallel dense + keyword search across all record types", "RRF fusion: score = 1/(60 + rank) across strategies", "bge-reranker-v2-m3 (ONNX CPU): rerank top 30, return top 10"],
+      config: ["Recency boost: half-life 90 days, max 30% multiplier", "Context expansion: fetch adjacent chunks", "Debug mode: full stage-by-stage breakdown", "Citation assembly with file/section/page info"],
+      tech: "bge-reranker-v2-m3 ONNX · ~100ms/30 candidates",
+    },
+  },
+  mcp: {
+    label: "MCP Server", icon: "🔌", color: C.accent, dim: C.accentDim,
+    desc: "HTTPS SSE · 4 tools for ChatGPT",
+    details: {
+      purpose: "Expose retrieval as MCP tools over HTTPS SSE. Only externally-accessible service.",
+      how: ["search_documents: full multi-stage hybrid retrieval pipeline", "get_document_context: expand around a previously found result", "list_recent_documents: browse recently indexed files", "get_sync_status: system health and processing stats"],
+      config: ["FastAPI + mcp Python SDK (SSE transport)", "TLS via ALB (ACM cert) or Elastic IP + certbot", "Bearer token auth on every request", "Port 8443, ALB routes /mcp/* here"],
+      tech: "FastAPI · uvicorn · mcp[server] · ONNX Runtime",
+    },
+  },
+  cdk: {
+    label: "CDK Infrastructure", icon: "🏗", color: C.cyan, dim: C.cyanDim,
+    desc: "4 TypeScript stacks · VPC → EC2 → ALB → Monitoring",
+    details: {
+      purpose: "AWS CDK (TypeScript) for reproducible, version-controlled infrastructure. Deploy with cdk deploy.",
+      how: ["network-stack: VPC, subnets, SGs, VPC endpoints for Bedrock/S3/SSM", "compute-stack: EC2 r6i.2xlarge, gp3 EBS 200GB, IAM role, SSM params", "loadbalancer-stack: ALB, ACM cert, Route53, path-based routing", "monitoring-stack: CloudWatch alarms, log groups, SNS, dashboard"],
+      config: ["Private subnet for EC2 (no direct internet access)", "VPC endpoints eliminate NAT Gateway ($35/mo savings)", "IAM scoped to Titan Embed + Haiku model ARNs only", "SSM Parameter Store for all secrets (no .env files on disk)"],
+      tech: "AWS CDK TypeScript · 4 stacks · cdk deploy",
+    },
+  },
+};
+
+const phases = [
+  { id: "1.1", label: "CDK network + compute stacks", cat: "infra" },
+  { id: "1.2", label: "Docker Compose + Postgres + Qdrant", cat: "infra" },
+  { id: "1.3", label: "PostgreSQL schema migrations", cat: "infra" },
+  { id: "1.4", label: "Sync worker (polling mode)", cat: "core" },
+  { id: "1.5", label: "Docling parser + normalization", cat: "core" },
+  { id: "1.6", label: "Structure-aware chunker", cat: "core" },
+  { id: "1.7", label: "Embedder (Bedrock Titan v2)", cat: "core" },
+  { id: "1.8", label: "Qdrant collection + indexing", cat: "core" },
+  { id: "1.9", label: "Section summaries (Haiku)", cat: "quality" },
+  { id: "1.10", label: "Document summaries (3-level pyramid)", cat: "quality" },
+  { id: "1.11", label: "Hybrid search (dense + keyword)", cat: "quality" },
+  { id: "1.12", label: "RRF score fusion", cat: "quality" },
+  { id: "1.13", label: "Cross-encoder reranker (ONNX)", cat: "quality" },
+  { id: "1.14", label: "MCP server + search_documents", cat: "integration" },
+  { id: "1.15", label: "CDK ALB + TLS", cat: "integration" },
+];
+const catColors = { infra: C.cyan, core: C.amber, quality: C.purple, integration: C.accent };
+
+const costs = [
+  { item: "EC2 r6i.2xlarge (1yr reserved)", ondemand: 403, reserved: 254, pct: 77 },
+  { item: "EBS gp3 200 GB", ondemand: 16, reserved: 16, pct: 5 },
+  { item: "ALB (optional)", ondemand: 22, reserved: 22, pct: 7 },
+  { item: "VPC Endpoints (3x)", ondemand: 22, reserved: 22, pct: 7 },
+  { item: "Route53 + CloudWatch + S3", ondemand: 4, reserved: 4, pct: 1 },
+  { item: "Elastic IP", ondemand: 3.65, reserved: 3.65, pct: 1 },
+  { item: "Bedrock API (Titan + Haiku)", ondemand: 1, reserved: 1, pct: 0 },
+];
+
+const configs = [
+  { name: "Full (ALB + VPC endpoints)", ondemand: "$467", reserved: "$318", note: "Production-ready with ALB health checks" },
+  { name: "Lean (no ALB, certbot)", ondemand: "$440", reserved: "$275", note: "Recommended starting config" },
+  { name: "Minimal (r6i.xlarge, no ALB)", ondemand: "$310", reserved: "$150", note: "Tight for Docling; batch parser only" },
+];
+
+function Card({ comp, isSelected, onClick }) {
+  return (
+    <div onClick={onClick} style={{
+      background: isSelected ? comp.dim : C.surface,
+      border: `1px solid ${isSelected ? comp.color : C.border}`,
+      borderRadius: 8, padding: "12px 14px", cursor: "pointer", transition: "all 0.15s",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
+        <span style={{ fontSize: 16 }}>{comp.icon}</span>
+        <span style={{ color: comp.color, fontWeight: 600, fontSize: 13, fontFamily: mono }}>{comp.label}</span>
+      </div>
+      <div style={{ color: C.muted, fontSize: 11, lineHeight: 1.4 }}>{comp.desc}</div>
+    </div>
+  );
+}
+
+function Detail({ comp }) {
+  if (!comp) return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 28,
+      display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 13,
+      minHeight: 280, fontStyle: "italic" }}>
+      Select a component to see implementation details
+    </div>
+  );
+  const d = comp.details;
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${comp.color}`, borderRadius: 8, padding: 20, minHeight: 280 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <span style={{ fontSize: 22 }}>{comp.icon}</span>
+        <div>
+          <div style={{ color: comp.color, fontWeight: 700, fontSize: 16, fontFamily: mono }}>{comp.label}</div>
+          <div style={{ color: C.muted, fontSize: 11, marginTop: 1 }}>{d.tech}</div>
+        </div>
+      </div>
+      <div style={{ color: C.text, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>{d.purpose}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        {[["How it works", d.how], ["Configuration", d.config]].map(([title, items]) => (
+          <div key={title}>
+            <div style={{ color: comp.color, fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{title}</div>
+            {items.map((m, i) => (
+              <div key={i} style={{ color: C.muted, fontSize: 11, lineHeight: 1.45, marginBottom: 5, paddingLeft: 10, borderLeft: `2px solid ${comp.dim}` }}>{m}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+window.__App = function App() {
+  const [sel, setSel] = useState(null);
+  const [tab, setTab] = useState("arch");
+  const [costMode, setCostMode] = useState("reserved");
+
+  const tabs = [
+    { id: "arch", label: "Architecture" },
+    { id: "cdk", label: "CDK Stacks" },
+    { id: "phase1", label: "Phase 1 Build" },
+    { id: "costs", label: "Cost Estimate" },
+  ];
+
+  return (
+    <div style={{ background: C.bg, color: C.text, minHeight: "100vh", fontFamily: "'Inter', -apple-system, sans-serif", padding: "20px 24px" }}>
+      <div style={{ maxWidth: 920, margin: "0 auto" }}>
+        <div style={{ marginBottom: 22 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 2, color: C.accent, marginBottom: 4, fontFamily: mono }}>Final Build Spec</div>
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5 }}>Private Dropbox RAG System</h1>
+          <p style={{ color: C.muted, fontSize: 13, margin: "4px 0 0" }}>
+            Docling · Qdrant · Bedrock Titan + Haiku · CDK · MCP for ChatGPT
+          </p>
+        </div>
+
+        <div style={{ display: "flex", gap: 2, marginBottom: 20, background: C.surface, borderRadius: 8, padding: 3, width: "fit-content" }}>
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              background: tab === t.id ? C.accentDim : "transparent",
+              color: tab === t.id ? C.accent : C.muted,
+              border: tab === t.id ? `1px solid ${C.borderActive}` : "1px solid transparent",
+              borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 500, cursor: "pointer", transition: "all 0.15s",
+            }}>{t.label}</button>
+          ))}
+        </div>
+
+        {tab === "arch" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+              {Object.entries(components).map(([id, comp]) => (
+                <Card key={id} comp={comp} isSelected={sel === id} onClick={() => setSel(sel === id ? null : id)} />
+              ))}
+            </div>
+            <Detail comp={sel ? components[sel] : null} />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginTop: 16 }}>
+              {[
+                { label: "Instance", val: "r6i.2xlarge", sub: "8 vCPU · 64 GB" },
+                { label: "Embedding", val: "Titan v2", sub: "1024-dim Bedrock" },
+                { label: "Summaries", val: "Haiku", sub: "3-level pyramid" },
+                { label: "Reranker", val: "bge-reranker", sub: "ONNX · 100ms" },
+              ].map((item, i) => (
+                <div key={i} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ color: C.muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>{item.label}</div>
+                  <div style={{ color: C.text, fontSize: 14, fontWeight: 700, fontFamily: mono, marginTop: 3 }}>{item.val}</div>
+                  <div style={{ color: C.muted, fontSize: 10, marginTop: 1 }}>{item.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab === "cdk" && (
+          <div>
+            {[
+              { name: "network-stack.ts", color: C.cyan, items: ["VPC with 2 AZs (public + private subnets)", "Security Groups: ALB SG inbound 443, EC2 SG from ALB only", "VPC Endpoints: bedrock-runtime, s3, ssm (eliminates NAT Gateway)", "SSH restricted to your IP only"] },
+              { name: "compute-stack.ts", color: C.amber, items: ["EC2 r6i.2xlarge in private subnet", "gp3 EBS 200 GB (3000 IOPS) mounted at /data", "IAM Role: bedrock:InvokeModel scoped to Titan + Haiku ARNs", "SSM Parameter Store for all secrets", "UserData: install Docker, mount EBS, docker compose up"] },
+              { name: "loadbalancer-stack.ts", color: C.accent, items: ["ALB in public subnets (or skip for lean: Elastic IP + certbot)", "ACM certificate for rag.yourdomain.com (DNS validation)", "Path routing: /mcp/* → port 8443, /webhook* → port 8080", "Route53 A record alias → ALB", "Health checks on /health endpoints"] },
+              { name: "monitoring-stack.ts", color: C.green, items: ["CloudWatch Log Group /rag/services (30-day retention)", "Alarms: EC2 status check, EBS queue length, disk > 80%, MCP 5xx > 5%", "SNS Topic with email subscription for alerts", "CloudWatch Dashboard: sync lag, query latency, index size, error rate"] },
+            ].map((stack, i) => (
+              <div key={i} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16, marginBottom: 10 }}>
+                <div style={{ color: stack.color, fontWeight: 700, fontSize: 14, fontFamily: mono, marginBottom: 10 }}>{stack.name}</div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {stack.items.map((item, j) => (
+                    <div key={j} style={{ color: C.muted, fontSize: 12, lineHeight: 1.4, paddingLeft: 10, borderLeft: `2px solid ${stack.color}30` }}>{item}</div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab === "phase1" && (
+          <div>
+            <div style={{ color: C.muted, fontSize: 12, marginBottom: 14, lineHeight: 1.5 }}>
+              Phase 1 delivers usable retrieval quality — not just basic chunk search. Summaries, hybrid search, RRF, and cross-encoder reranking are all included from the start.
+            </div>
+            <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+              {Object.entries(catColors).map(([k, v]) => (
+                <div key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: v }} />
+                  <span style={{ color: C.muted, fontSize: 11, textTransform: "capitalize" }}>{k}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {phases.map(p => (
+                <div key={p.id} style={{
+                  display: "flex", alignItems: "center", gap: 12,
+                  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: "9px 14px",
+                }}>
+                  <div style={{
+                    width: 32, minWidth: 32, height: 24, borderRadius: 4,
+                    background: catColors[p.cat] + "20", border: `1.5px solid ${catColors[p.cat]}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontWeight: 700, fontSize: 10, color: catColors[p.cat], fontFamily: mono,
+                  }}>{p.id}</div>
+                  <span style={{ color: C.text, fontSize: 13 }}>{p.label}</span>
+                  <span style={{
+                    marginLeft: "auto", fontSize: 9, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5,
+                    color: catColors[p.cat], background: catColors[p.cat] + "15", padding: "2px 6px", borderRadius: 3,
+                  }}>{p.cat}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab === "costs" && (
+          <div>
+            <div style={{ display: "flex", gap: 2, marginBottom: 16, background: C.surface, borderRadius: 6, padding: 2, width: "fit-content" }}>
+              {["reserved", "ondemand"].map(m => (
+                <button key={m} onClick={() => setCostMode(m)} style={{
+                  background: costMode === m ? C.accentDim : "transparent",
+                  color: costMode === m ? C.accent : C.muted,
+                  border: costMode === m ? `1px solid ${C.borderActive}` : "1px solid transparent",
+                  borderRadius: 4, padding: "4px 12px", fontSize: 11, fontWeight: 500, cursor: "pointer",
+                }}>{m === "reserved" ? "Reserved 1yr" : "On-Demand"}</button>
+              ))}
+            </div>
+
+            {costs.map((c, i) => {
+              const val = costMode === "reserved" ? c.reserved : c.ondemand;
+              return (
+                <div key={i} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: "10px 14px", marginBottom: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ color: C.text, fontSize: 13 }}>{c.item}</span>
+                    <span style={{ color: C.accent, fontWeight: 700, fontFamily: mono, fontSize: 13 }}>${val}/mo</span>
+                  </div>
+                  <div style={{ background: C.bg, borderRadius: 3, height: 4, overflow: "hidden" }}>
+                    <div style={{ background: C.accent, height: "100%", width: `${c.pct}%`, borderRadius: 3 }} />
+                  </div>
+                </div>
+              );
+            })}
+
+            <div style={{ marginTop: 16, marginBottom: 10 }}>
+              <div style={{ color: C.muted, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Configuration Options</div>
+              {configs.map((cfg, i) => (
+                <div key={i} style={{
+                  background: i === 1 ? C.accentDim : C.surface,
+                  border: `1px solid ${i === 1 ? C.borderActive : C.border}`,
+                  borderRadius: 6, padding: "12px 14px", marginBottom: 6,
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <div>
+                    <div style={{ color: C.text, fontSize: 13, fontWeight: i === 1 ? 600 : 400 }}>
+                      {cfg.name} {i === 1 && <span style={{ color: C.green, fontSize: 10, marginLeft: 6 }}>RECOMMENDED</span>}
+                    </div>
+                    <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>{cfg.note}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ color: C.accent, fontWeight: 700, fontFamily: mono, fontSize: 16 }}>
+                      {costMode === "reserved" ? cfg.reserved : cfg.ondemand}
+                    </div>
+                    <div style={{ color: C.muted, fontSize: 10 }}>/month</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: 14, marginTop: 14 }}>
+              <div style={{ color: C.muted, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>One-Time Cold Start</div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: C.muted, fontSize: 12 }}>Full corpus (500 docs, 50K pages): embed + summarize + compute</span>
+                <span style={{ color: C.green, fontWeight: 700, fontFamily: mono, fontSize: 14 }}>~$7</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+    const App = window.__App;
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(React.createElement(App));
+  </script>
+</body>
+</html>
