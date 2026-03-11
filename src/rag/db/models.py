@@ -68,14 +68,36 @@ class SqliteMetadataDB:
 
     def upsert_document(self, doc: DocumentRow) -> None:
         self._conn.execute(
-            """INSERT OR REPLACE INTO documents
+            """INSERT INTO documents
             (doc_id, file_path, folder_path, folder_ancestors, title,
              file_type, modified_at, indexed_at, parser_version,
              raw_content_hash, normalized_content_hash, duplicate_of_doc_id,
              ocr_required, ocr_confidence, doc_type_guess, key_topics,
              summary_l1, summary_l2, summary_l3, summary_content_hash,
              embedding_model_version, chunker_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(doc_id) DO UPDATE SET
+                file_path = excluded.file_path,
+                folder_path = excluded.folder_path,
+                folder_ancestors = excluded.folder_ancestors,
+                title = excluded.title,
+                file_type = excluded.file_type,
+                modified_at = excluded.modified_at,
+                indexed_at = excluded.indexed_at,
+                parser_version = excluded.parser_version,
+                raw_content_hash = excluded.raw_content_hash,
+                normalized_content_hash = excluded.normalized_content_hash,
+                duplicate_of_doc_id = excluded.duplicate_of_doc_id,
+                ocr_required = excluded.ocr_required,
+                ocr_confidence = excluded.ocr_confidence,
+                doc_type_guess = excluded.doc_type_guess,
+                key_topics = excluded.key_topics,
+                summary_l1 = excluded.summary_l1,
+                summary_l2 = excluded.summary_l2,
+                summary_l3 = excluded.summary_l3,
+                summary_content_hash = excluded.summary_content_hash,
+                embedding_model_version = excluded.embedding_model_version,
+                chunker_version = excluded.chunker_version""",
             (
                 doc.doc_id,
                 doc.file_path,
