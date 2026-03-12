@@ -19,6 +19,7 @@ from rag.types import (
     FileType,
     NormalizedDocument,
     ProcessingLogEntry,
+    ProcessingOutcome,
     QdrantPayloadModel,
     RecordType,
     SectionRow,
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ProgressCallback = Callable[[int, int, str], None]
+ProgressCallback = Callable[[int, int, str, ProcessingOutcome, str], None]
 
 
 class PipelineRunner:
@@ -62,15 +63,18 @@ class PipelineRunner:
         self._config = config
         self._summarizer = summarizer
 
-    def process_file(self, event: FileEvent) -> bool:
-        """Process a single file through the full pipeline. Returns True on success."""
+    def process_file(self, event: FileEvent) -> tuple[ProcessingOutcome, str]:
+        """Process a single file through the full pipeline.
+
+        Returns (outcome, detail) where detail is a human-readable description.
+        """
         file_path = event.file_path
         start = time.monotonic()
 
         try:
             if event.event_type == "deleted":
                 self._handle_deletion(event)
-                return True
+                return ProcessingOutcome.DELETED, "removed from index"
 
             path = Path(file_path)
             folder_path = str(path.parent)
@@ -124,10 +128,12 @@ class PipelineRunner:
                 if existing_doc is not None and existing_doc.doc_id == canonical:
                     self._update_sync_status(file_path, "done")
                     self._log(canonical, file_path, "dedup", "unchanged", start, "skipped")
-                    return True
+                    return ProcessingOutcome.UNCHANGED, "content unchanged"
 
                 # Different file with same content — record as duplicate
                 doc_id = str(uuid.uuid4())
+                canonical_doc = self._db.get_document(canonical)
+                canonical_name = Path(canonical_doc.file_path).name if canonical_doc else canonical
                 self._db.upsert_document(
                     DocumentRow(
                         doc_id=doc_id,
@@ -145,7 +151,7 @@ class PipelineRunner:
                 self._update_sync_status(file_path, "done")
                 details = f"duplicate of {canonical}"
                 self._log(doc_id, file_path, "dedup", "duplicate", start, details)
-                return True
+                return ProcessingOutcome.DUPLICATE, f"duplicate of {canonical_name}"
 
             doc_id = parsed_doc.doc_id
 
@@ -267,30 +273,27 @@ class PipelineRunner:
 
             self._update_sync_status(file_path, "done")
             self._log(doc_id, file_path, "pipeline", "success", start, f"{len(chunks)} chunks")
-            return True
+            return ProcessingOutcome.INDEXED, f"{len(chunks)} chunks"
 
         except Exception:
             logger.exception("Error processing %s", file_path)
             self._update_sync_status(file_path, "error", str(file_path))
             self._log(None, file_path, "pipeline", "error", start, file_path)
-            return False
+            return ProcessingOutcome.ERROR, "processing failed"
 
     def process_batch(
         self,
         events: list[FileEvent],
         progress: ProgressCallback | None = None,
-    ) -> tuple[int, int]:
-        """Process a batch of file events. Returns (success_count, error_count)."""
-        success = 0
-        errors = 0
+    ) -> dict[ProcessingOutcome, int]:
+        """Process a batch of file events. Returns counts per outcome."""
+        counts: dict[ProcessingOutcome, int] = {o: 0 for o in ProcessingOutcome}
         for i, event in enumerate(events):
+            outcome, detail = self.process_file(event)
+            counts[outcome] += 1
             if progress:
-                progress(i + 1, len(events), Path(event.file_path).name)
-            if self.process_file(event):
-                success += 1
-            else:
-                errors += 1
-        return success, errors
+                progress(i + 1, len(events), Path(event.file_path).name, outcome, detail)
+        return counts
 
     def _summarize_document(
         self,

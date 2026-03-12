@@ -356,17 +356,41 @@ def _handle_reindex(target: str, config: AppConfig, folder: str | None) -> None:
 
 
 def _run_index(config: AppConfig, events: list[FileEvent]) -> None:
+    from rag.types import ProcessingOutcome
+
     click.echo(f"Found {len(events)} files to process.")
     if not events:
         return
 
     _db, runner, _engine = _init_components(config)
 
-    def progress(current: int, total: int, name: str) -> None:
-        click.echo(f"  [{current}/{total}] {name}")
+    def progress(
+        current: int, total: int, name: str, outcome: ProcessingOutcome, detail: str
+    ) -> None:
+        label = {
+            ProcessingOutcome.INDEXED: click.style("indexed", fg="green"),
+            ProcessingOutcome.UNCHANGED: click.style("unchanged", fg="yellow"),
+            ProcessingOutcome.DUPLICATE: click.style("duplicate", fg="yellow"),
+            ProcessingOutcome.DELETED: click.style("deleted", fg="cyan"),
+            ProcessingOutcome.ERROR: click.style("error", fg="red"),
+        }[outcome]
+        click.echo(f"  [{current}/{total}] {name} — {label} ({detail})")
 
-    success, errors = runner.process_batch(events, progress=progress)
-    click.echo(f"\nIndexed {success}/{len(events)} documents. {errors} errors.")
+    counts = runner.process_batch(events, progress=progress)
+
+    parts: list[str] = []
+    if counts[ProcessingOutcome.INDEXED]:
+        parts.append(f"{counts[ProcessingOutcome.INDEXED]} indexed")
+    if counts[ProcessingOutcome.UNCHANGED]:
+        parts.append(f"{counts[ProcessingOutcome.UNCHANGED]} unchanged")
+    if counts[ProcessingOutcome.DUPLICATE]:
+        parts.append(f"{counts[ProcessingOutcome.DUPLICATE]} duplicates")
+    if counts[ProcessingOutcome.DELETED]:
+        parts.append(f"{counts[ProcessingOutcome.DELETED]} deleted")
+    if counts[ProcessingOutcome.ERROR]:
+        parts.append(f"{counts[ProcessingOutcome.ERROR]} errors")
+
+    click.echo(f"\nProcessed {len(events)} files: {', '.join(parts)}.")
 
 
 @main.command()

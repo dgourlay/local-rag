@@ -28,6 +28,14 @@ class FileType(StrEnum):
     MD = "md"
 
 
+class ProcessingOutcome(StrEnum):
+    INDEXED = "indexed"
+    UNCHANGED = "unchanged"
+    DUPLICATE = "duplicate"
+    DELETED = "deleted"
+    ERROR = "error"
+
+
 # --- Pipeline boundary models ---
 
 

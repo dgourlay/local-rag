@@ -200,5 +200,9 @@ def indexed_pipeline(
     file_events: list[FileEvent],
 ) -> tuple[PipelineRunner, int, int]:
     """Index all valid fixtures and return (runner, success_count, error_count)."""
-    success, errors = pipeline_runner.process_batch(file_events)
+    from rag.types import ProcessingOutcome
+
+    counts = pipeline_runner.process_batch(file_events)
+    success = counts[ProcessingOutcome.INDEXED] + counts[ProcessingOutcome.DUPLICATE]
+    errors = counts[ProcessingOutcome.ERROR]
     return pipeline_runner, success, errors

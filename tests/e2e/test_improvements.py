@@ -222,7 +222,11 @@ def indexed_with_summaries(
     file_events: list[FileEvent],
 ) -> tuple[PipelineRunner, int, int]:
     """Index all fixtures with summarization enabled."""
-    success, errors = pipeline_with_summaries.process_batch(file_events)
+    from rag.types import ProcessingOutcome
+
+    counts = pipeline_with_summaries.process_batch(file_events)
+    success = counts[ProcessingOutcome.INDEXED] + counts[ProcessingOutcome.DUPLICATE]
+    errors = counts[ProcessingOutcome.ERROR]
     return pipeline_with_summaries, success, errors
 
 

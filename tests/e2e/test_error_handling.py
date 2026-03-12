@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rag.types import ProcessingOutcome
+
 if TYPE_CHECKING:
     from rag.db.models import SqliteMetadataDB
     from rag.pipeline.runner import PipelineRunner
@@ -16,7 +18,8 @@ class TestSingleBadFileDoesntCrashBatch:
         metadata_db: SqliteMetadataDB,
     ) -> None:
         """Batch with corrupted + valid files: valid files indexed, corrupted errored."""
-        success, _errors = pipeline_runner.process_batch(file_events)
+        counts = pipeline_runner.process_batch(file_events)
+        success = counts[ProcessingOutcome.INDEXED] + counts[ProcessingOutcome.DUPLICATE]
 
         # At least some files should succeed
         assert success >= 4

@@ -113,7 +113,7 @@ def _parse_in_subprocess(
         )
 
 
-_SUBPROCESS_TIMEOUT_SECONDS = 300
+_SUBPROCESS_TIMEOUT_SECONDS = 600
 
 
 class DoclingParser:

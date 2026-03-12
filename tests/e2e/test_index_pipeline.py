@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rag.types import ProcessingOutcome
+
 if TYPE_CHECKING:
     from rag.db.models import SqliteMetadataDB
     from rag.db.qdrant import QdrantVectorStore
@@ -19,8 +21,8 @@ class TestIndexMarkdown:
     ) -> None:
         """Index quarterly-report.md, verify DB and vector state."""
         event = next(e for e in file_events if "quarterly-report" in e.file_path)
-        result = pipeline_runner.process_file(event)
-        assert result is True
+        outcome, _detail = pipeline_runner.process_file(event)
+        assert outcome == ProcessingOutcome.INDEXED
 
         # Verify sync_state
         sync = metadata_db.get_sync_state(event.file_path)
@@ -65,8 +67,8 @@ class TestIndexPlaintext:
     ) -> None:
         """Index readme.txt as a single section."""
         event = next(e for e in file_events if "readme.txt" in e.file_path)
-        result = pipeline_runner.process_file(event)
-        assert result is True
+        outcome, _detail = pipeline_runner.process_file(event)
+        assert outcome == ProcessingOutcome.INDEXED
 
         sync = metadata_db.get_sync_state(event.file_path)
         assert sync is not None
@@ -91,8 +93,8 @@ class TestIndexEmptyFile:
         """Empty file should be handled without crashing."""
         empty_events = [e for e in file_events if "empty.txt" in e.file_path]
         if empty_events:
-            result = pipeline_runner.process_file(empty_events[0])
-            assert result is False
+            outcome, _detail = pipeline_runner.process_file(empty_events[0])
+            assert outcome == ProcessingOutcome.ERROR
             sync = metadata_db.get_sync_state(empty_events[0].file_path)
             assert sync is not None
             assert sync.process_status in ("error", "poison")
@@ -108,8 +110,8 @@ class TestIndexCorruptedFile:
         """corrupted.pdf returns error, doesn't crash batch."""
         corrupted = [e for e in file_events if "corrupted.pdf" in e.file_path]
         if corrupted:
-            result = pipeline_runner.process_file(corrupted[0])
-            assert result is False
+            outcome, _detail = pipeline_runner.process_file(corrupted[0])
+            assert outcome == ProcessingOutcome.ERROR
             sync = metadata_db.get_sync_state(corrupted[0].file_path)
             assert sync is not None
             assert sync.process_status in ("error", "poison")

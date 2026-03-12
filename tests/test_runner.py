@@ -15,6 +15,7 @@ from rag.types import (
     FileType,
     ParsedDocument,
     ParsedSection,
+    ProcessingOutcome,
 )
 
 # Resolve forward references for Pydantic models using `from __future__ import annotations`
@@ -148,22 +149,23 @@ class TestProcessFile:
         event = _make_event(tmp_path)
         runner, mocks = _make_runner(tmp_path, conn)
 
-        ok = runner.process_file(event)
+        outcome, detail = runner.process_file(event)
 
-        assert ok is True
+        assert outcome == ProcessingOutcome.INDEXED
+        assert "chunk" in detail
         mocks["parser"].parse.assert_called_once()
         mocks["embedder"].embed_batch.assert_called_once()
         mocks["vector_store"].upsert_points.assert_called_once()
 
-    def test_parse_error_returns_false(self, tmp_path: Path) -> None:
+    def test_parse_error_returns_error(self, tmp_path: Path) -> None:
         conn = _create_db()
         event = _make_event(tmp_path)
         parse_err = ParseError(error="bad file", file_path=str(tmp_path / "test.txt"))
         runner, mocks = _make_runner(tmp_path, conn, parse_result=parse_err)
 
-        ok = runner.process_file(event)
+        outcome, _detail = runner.process_file(event)
 
-        assert ok is False
+        assert outcome == ProcessingOutcome.ERROR
         mocks["embedder"].embed_batch.assert_not_called()
         mocks["vector_store"].upsert_points.assert_not_called()
 
@@ -173,8 +175,8 @@ class TestProcessFile:
         runner, mocks = _make_runner(tmp_path, conn)
 
         # Process first file to register the hash
-        ok1 = runner.process_file(event)
-        assert ok1 is True
+        outcome1, _detail = runner.process_file(event)
+        assert outcome1 == ProcessingOutcome.INDEXED
 
         # Reset mocks for second call
         mocks["embedder"].embed_batch.reset_mock()
@@ -189,8 +191,8 @@ class TestProcessFile:
             event_type="created",
             modified_at="2026-01-02T00:00:00+00:00",
         )
-        ok2 = runner.process_file(event2)
-        assert ok2 is True
+        outcome2, _detail = runner.process_file(event2)
+        assert outcome2 in (ProcessingOutcome.UNCHANGED, ProcessingOutcome.DUPLICATE)
 
         # The parser was called (it doesn't skip parse), but since the
         # normalized hash matches, embedding/indexing should be skipped
@@ -216,8 +218,8 @@ class TestProcessFile:
             event_type="deleted",
             modified_at="2026-01-01T00:00:00+00:00",
         )
-        ok = runner.process_file(delete_event)
-        assert ok is True
+        outcome, _detail = runner.process_file(delete_event)
+        assert outcome == ProcessingOutcome.DELETED
 
         # Verify sync state is marked deleted
         state = mocks["db"].get_sync_state(str(tmp_path / "test.txt"))
@@ -233,8 +235,8 @@ class TestProcessFile:
         runner, mocks = _make_runner(tmp_path, conn, parse_result=parse_err)
 
         # First failure
-        ok = runner.process_file(event)
-        assert ok is False
+        outcome, _detail = runner.process_file(event)
+        assert outcome == ProcessingOutcome.ERROR
 
         state = mocks["db"].get_sync_state(str(tmp_path / "test.txt"))
         assert state is not None
@@ -298,9 +300,10 @@ class TestProcessBatch:
 
         mocks["parser"].parse.side_effect = side_effect_parse
 
-        success, errors = runner.process_batch(events)
-        assert success == 2
-        assert errors == 0
+        counts = runner.process_batch(events)
+        # Both succeed (one indexed, one may dedup due to same normalized text)
+        assert counts[ProcessingOutcome.INDEXED] + counts[ProcessingOutcome.DUPLICATE] == 2
+        assert counts[ProcessingOutcome.ERROR] == 0
 
     def test_batch_with_errors(self, tmp_path: Path) -> None:
         conn = _create_db()
@@ -341,20 +344,24 @@ class TestProcessBatch:
 
         mocks["parser"].parse.side_effect = side_effect_parse
 
-        success, errors = runner.process_batch(events)
-        assert success == 1
-        assert errors == 1
+        counts = runner.process_batch(events)
+        assert counts[ProcessingOutcome.INDEXED] == 1
+        assert counts[ProcessingOutcome.ERROR] == 1
 
     def test_progress_callback(self, tmp_path: Path) -> None:
         conn = _create_db()
         event = _make_event(tmp_path)
         runner, _mocks = _make_runner(tmp_path, conn)
 
-        calls: list[tuple[int, int, str]] = []
+        calls: list[tuple[int, int, str, ProcessingOutcome, str]] = []
 
-        def on_progress(current: int, total: int, filename: str) -> None:
-            calls.append((current, total, filename))
+        def on_progress(
+            current: int, total: int, filename: str,
+            outcome: ProcessingOutcome, detail: str,
+        ) -> None:
+            calls.append((current, total, filename, outcome, detail))
 
         runner.process_batch([event], progress=on_progress)
         assert len(calls) == 1
-        assert calls[0] == (1, 1, "test.txt")
+        assert calls[0][0:3] == (1, 1, "test.txt")
+        assert calls[0][3] == ProcessingOutcome.INDEXED

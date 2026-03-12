@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rag.types import ProcessingOutcome
+
 if TYPE_CHECKING:
     from rag.db.models import SqliteMetadataDB
     from rag.db.qdrant import QdrantVectorStore
@@ -21,8 +23,10 @@ class TestExactDuplicateSuppressed:
         original = next(e for e in file_events if "quarterly-report" in e.file_path)
         duplicate = next(e for e in file_events if "duplicate-report" in e.file_path)
 
-        assert pipeline_runner.process_file(original) is True
-        assert pipeline_runner.process_file(duplicate) is True
+        outcome1, _ = pipeline_runner.process_file(original)
+        assert outcome1 == ProcessingOutcome.INDEXED
+        outcome2, _ = pipeline_runner.process_file(duplicate)
+        assert outcome2 == ProcessingOutcome.DUPLICATE
 
         orig_row = metadata_db._conn.execute(
             "SELECT * FROM documents WHERE file_path = ?", (original.file_path,)
