@@ -412,6 +412,7 @@ export default function App() {
     { id: "retrieval", label: "Retrieval Engine" },
     { id: "mcp", label: "MCP Tools" },
     { id: "cli", label: "CLI Reference" },
+    { id: "cleanup", label: "Cleanup & Uninstall" },
   ];
 
   return (
@@ -1673,6 +1674,206 @@ transport = "stdio"`}
                     <span style={{ color: C.muted, fontSize: 11 }}>{p.note}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Cleanup & Uninstall tab */}
+        {tab === "cleanup" && (
+          <div>
+            <div
+              style={{
+                color: C.muted,
+                fontSize: 12,
+                marginBottom: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              local-rag stores models, config, and data across several directories.
+              Below is everything you need to fully remove it from your system.
+            </div>
+
+            {/* Disk usage summary */}
+            <div
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: 16,
+                marginBottom: 12,
+              }}
+            >
+              <div
+                style={{
+                  color: C.amber,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 12,
+                }}
+              >
+                Disk Usage Estimates
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {[
+                  { label: "Embedding model (BAAI/bge-m3)", size: "~4.3 GB", path: "~/.cache/local-rag/models/models--BAAI--bge-m3/" },
+                  { label: "Reranker model (bge-reranker-v2-m3)", size: "~2.1 GB", path: "~/.cache/local-rag/models/bge-reranker-v2-m3/" },
+                  { label: "SQLite database", size: "~1 MB", path: "~/.local/share/local-rag/metadata.db" },
+                  { label: "Config file", size: "< 1 KB", path: "~/.config/local-rag/config.toml" },
+                  { label: "Qdrant data (Docker volume)", size: "Varies", path: "Docker volume: local-rag_qdrant_data" },
+                ].map((item, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr auto",
+                      gap: 8,
+                      padding: "8px 12px",
+                      background: C.bg,
+                      borderRadius: 4,
+                    }}
+                  >
+                    <div>
+                      <div style={{ color: C.text, fontSize: 12, fontWeight: 500 }}>{item.label}</div>
+                      <div style={{ color: C.muted, fontSize: 10, fontFamily: mono, marginTop: 2 }}>{item.path}</div>
+                    </div>
+                    <div style={{ color: C.amber, fontSize: 12, fontFamily: mono, fontWeight: 600, alignSelf: "center" }}>
+                      {item.size}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: "8px 12px",
+                  background: C.amberDim,
+                  borderRadius: 4,
+                  color: C.amber,
+                  fontSize: 11,
+                  fontWeight: 500,
+                }}
+              >
+                Total disk usage: ~6.5 GB (mostly ML models)
+              </div>
+            </div>
+
+            {/* Full uninstall steps */}
+            <div
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: 16,
+                marginBottom: 12,
+              }}
+            >
+              <div
+                style={{
+                  color: C.red,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 12,
+                }}
+              >
+                Full Uninstall
+              </div>
+              <div
+                style={{
+                  fontFamily: mono,
+                  fontSize: 11,
+                  color: C.muted,
+                  lineHeight: 1.8,
+                  background: C.bg,
+                  padding: 12,
+                  borderRadius: 6,
+                  whiteSpace: "pre",
+                }}
+              >
+{`# 1. Stop and remove Qdrant container + data
+docker compose down -v
+
+# 2. Remove cached models (~6.4 GB)
+rm -rf ~/.cache/local-rag
+
+# 3. Remove database and application data
+rm -rf ~/.local/share/local-rag
+
+# 4. Remove config
+rm -rf ~/.config/local-rag
+
+# 5. Remove MCP config entries (if installed)
+#    Edit the relevant file and remove the "local-rag" entry:
+#    Claude Code:    ~/.claude.json
+#    Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json
+#    Kiro:           ~/.kiro/settings/mcp.json
+
+# 6. Uninstall the Python package
+pip uninstall local-rag
+
+# 7. Remove the source code (optional)
+rm -rf /path/to/local-rag`}
+              </div>
+            </div>
+
+            {/* Partial cleanup */}
+            <div
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: 16,
+              }}
+            >
+              <div
+                style={{
+                  color: C.cyan,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 12,
+                }}
+              >
+                Partial Cleanup (Free Disk Space)
+              </div>
+              <div
+                style={{
+                  color: C.text,
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                }}
+              >
+                <div style={{ marginBottom: 8 }}>
+                  If you want to keep local-rag installed but reclaim disk space, you can
+                  remove the cached models. They will be re-downloaded automatically on
+                  next use.
+                </div>
+                <div
+                  style={{
+                    fontFamily: mono,
+                    fontSize: 11,
+                    color: C.muted,
+                    lineHeight: 1.8,
+                    background: C.bg,
+                    padding: 12,
+                    borderRadius: 6,
+                    whiteSpace: "pre",
+                  }}
+                >
+{`# Remove models only (~6.4 GB, re-downloads on next use)
+rm -rf ~/.cache/local-rag/models
+
+# Clear indexed data (keeps config, re-index with rag index)
+rm -f ~/.local/share/local-rag/metadata.db
+
+# Re-download models when ready
+make download-models`}
+                </div>
               </div>
             </div>
           </div>

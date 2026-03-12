@@ -288,6 +288,56 @@ make format     # auto-format with ruff
 ```
 
 
+## Cleanup & Uninstall
+
+local-rag stores ML models, config, and data across several directories (~6.5 GB total, mostly models).
+
+### Storage locations
+
+| What | Path | Size |
+|------|------|------|
+| Embedding model (BGE-M3) | `~/.cache/local-rag/models/models--BAAI--bge-m3/` | ~4.3 GB |
+| Reranker model (ONNX) | `~/.cache/local-rag/models/bge-reranker-v2-m3/` | ~2.1 GB |
+| SQLite database | `~/.local/share/local-rag/metadata.db` | ~1 MB |
+| Config file | `~/.config/local-rag/config.toml` | < 1 KB |
+| Qdrant data | Docker volume `local-rag_qdrant_data` | Varies |
+
+### Full uninstall
+
+```bash
+# 1. Stop and remove Qdrant container + data
+docker compose down -v
+
+# 2. Remove cached models (~6.4 GB)
+rm -rf ~/.cache/local-rag
+
+# 3. Remove database and application data
+rm -rf ~/.local/share/local-rag
+
+# 4. Remove config
+rm -rf ~/.config/local-rag
+
+# 5. Remove MCP config entries (if installed)
+#    Edit the relevant file and remove the "local-rag" entry:
+#    Claude Code:    ~/.claude.json
+#    Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json
+#    Kiro:           ~/.kiro/settings/mcp.json
+
+# 6. Uninstall the Python package
+pip uninstall local-rag
+```
+
+### Free disk space (keep local-rag installed)
+
+```bash
+# Remove models only (~6.4 GB, re-downloads on next use)
+rm -rf ~/.cache/local-rag/models
+
+# Re-download when ready
+make download-models
+```
+
+
 ## Troubleshooting
 
 **"No config file found"** -- Run `rag init`, or copy `config.example.toml` to
