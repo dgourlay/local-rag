@@ -68,8 +68,27 @@ class SummarizationConfig(BaseModel):
     enabled: bool = True
     provider: str = "cli"
     command: str = "claude"
-    args: list[str] = ["--print"]
+    args: list[str] | None = None
+    input_mode: Literal["stdin", "arg"] | None = None
     timeout_seconds: int = 60
+
+    @model_validator(mode="after")
+    def _apply_preset_defaults(self) -> SummarizationConfig:
+        """Auto-detect args and input_mode from command if not explicitly set."""
+        from rag.pipeline.summarizer import get_cli_preset
+
+        preset = get_cli_preset(self.command)
+        if preset is not None:
+            if self.args is None:
+                self.args = preset[0]
+            if self.input_mode is None:
+                self.input_mode = preset[1]
+        # Fallback for unknown tools
+        if self.args is None:
+            self.args = []
+        if self.input_mode is None:
+            self.input_mode = "stdin"
+        return self
 
 
 class MCPConfig(BaseModel):

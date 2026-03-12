@@ -23,6 +23,24 @@ logger = logging.getLogger(__name__)
 
 MAX_EXCERPT_CHARS = 5000
 
+# Known CLI tool presets: (args, input_mode)
+_CLI_PRESETS: dict[str, tuple[list[str], str]] = {
+    "claude": (["--print"], "stdin"),
+    "kiro-cli": (["chat", "--no-interactive", "--wrap", "never"], "arg"),
+    "codex": (
+        ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
+         "-o", "/dev/stdout", "-"],
+        "stdin",
+    ),
+}
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def get_cli_preset(command: str) -> tuple[list[str], str] | None:
+    """Return (args, input_mode) preset for a known CLI tool, or None."""
+    return _CLI_PRESETS.get(command)
+
 DOCUMENT_PROMPT_TEMPLATE = """\
 Analyze the following document and return a JSON object with these fields:
 - "summary_l1": A short phrase (3-8 words) describing the document
@@ -163,14 +181,22 @@ class CliSummarizer:
         return env
 
     def _run_cli(self, prompt: str) -> str | None:
-        """Run the LLM CLI with the given prompt via stdin. Returns stdout or None."""
-        cmd = [self._config.command, *self._config.args]
+        """Run the LLM CLI with the given prompt. Returns cleaned stdout or None."""
+        input_mode = self._config.input_mode
+
+        if input_mode == "arg":
+            cmd = [self._config.command, *self._config.args, prompt]
+            stdin_text = None
+        else:
+            cmd = [self._config.command, *self._config.args]
+            stdin_text = prompt
+
         env = self._cli_env()
 
         try:
             result = subprocess.run(
                 cmd,
-                input=prompt,
+                input=stdin_text,
                 capture_output=True,
                 text=True,
                 timeout=self._config.timeout_seconds,
@@ -186,7 +212,7 @@ class CliSummarizer:
                 # Retry once
                 result = subprocess.run(
                     cmd,
-                    input=prompt,
+                    input=stdin_text,
                     capture_output=True,
                     text=True,
                     timeout=self._config.timeout_seconds * 2,
@@ -200,7 +226,7 @@ class CliSummarizer:
                     )
                     return None
 
-            return result.stdout
+            return _clean_cli_output(result.stdout)
 
         except subprocess.TimeoutExpired:
             logger.error(
@@ -211,3 +237,18 @@ class CliSummarizer:
             logger.error("CLI %s not found", self._config.command)
             self._available = False
             return None
+
+
+def _clean_cli_output(text: str) -> str:
+    """Strip ANSI escape codes, leading '> ' prefix, and bare format hints from CLI output."""
+    text = _ANSI_ESCAPE_RE.sub("", text)
+    lines = text.split("\n")
+    cleaned: list[str] = []
+    for line in lines:
+        line = line.lstrip("> ") if line.startswith("> ") else line
+        # Skip bare format hint lines (e.g. "json" before a code block)
+        stripped = line.strip()
+        if stripped in ("json", "```json", "```"):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned)

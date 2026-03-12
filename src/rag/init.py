@@ -57,9 +57,17 @@ def create_config(
     lines.append("")
 
     if llm_command:
+        from rag.pipeline.summarizer import get_cli_preset
+
         lines.append("[summarization]")
         lines.append("enabled = true")
         lines.append(f'command = "{llm_command}"')
+        preset = get_cli_preset(llm_command)
+        if preset is not None:
+            args, input_mode = preset
+            args_formatted = [f'"{a}"' for a in args]
+            lines.append(f"args = [{', '.join(args_formatted)}]")
+            lines.append(f'input_mode = "{input_mode}"')
         lines.append("")
 
     config_path.write_text("\n".join(lines) + "\n")
