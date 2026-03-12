@@ -34,7 +34,7 @@ qdrant-down:
 download-models:
 	bash scripts/download-models.sh
 
-setup: install
+setup: install download-models
 	@echo ""
 	@if docker info >/dev/null 2>&1; then \
 		$(MAKE) qdrant-up; \
@@ -42,7 +42,7 @@ setup: install
 		echo "Setup complete. Next steps:"; \
 		echo "  1. source .venv/bin/activate"; \
 		echo "  2. rag init          # configure folders"; \
-		echo "  3. rag index         # index documents (downloads models on first run)"; \
+		echo "  3. rag index         # index documents"; \
 		echo "  4. rag search \"test\" # verify it works"; \
 	else \
 		echo "Python environment ready, but Docker is not running."; \
