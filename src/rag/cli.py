@@ -378,7 +378,7 @@ def _run_index(config: AppConfig, events: list[FileEvent]) -> None:
     click.echo(" done.")
 
     def on_start(current: int, total: int, name: str) -> None:
-        click.echo(f"  [{current}/{total}] {name} — parsing...", nl=False)
+        click.echo(f"  [{current}/{total}] {name} — parsing...")
 
     def progress(
         current: int, total: int, name: str, outcome: ProcessingOutcome, detail: str
