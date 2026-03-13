@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, int, str, ProcessingOutcome, str], None]
 StartCallback = Callable[[int, int, str], None]
+StatusCallback = Callable[[int, int, str, str], None]
 
 
 @dataclass
@@ -379,6 +380,7 @@ class PipelineRunner:
         events: list[FileEvent],
         progress: ProgressCallback | None = None,
         on_start: StartCallback | None = None,
+        on_status: StatusCallback | None = None,
     ) -> dict[ProcessingOutcome, int]:
         """Process a batch of file events with pipeline parallelism.
 
@@ -400,7 +402,7 @@ class PipelineRunner:
         self._start_background_worker()
 
         try:
-            return self._process_batch_parallel(events, progress, on_start)
+            return self._process_batch_parallel(events, progress, on_start, on_status)
         finally:
             self._stop_background_worker()
 
@@ -460,6 +462,7 @@ class PipelineRunner:
         events: list[FileEvent],
         progress: ProgressCallback | None,
         on_start: StartCallback | None = None,
+        on_status: StatusCallback | None = None,
     ) -> dict[ProcessingOutcome, int]:
         """Core implementation of the parallel batch pipeline."""
         counts: dict[ProcessingOutcome, int] = dict.fromkeys(ProcessingOutcome, 0)
@@ -561,7 +564,7 @@ class PipelineRunner:
             for pr, (si, ei) in zip(pending, boundaries, strict=True):
                 doc_vectors = all_vectors[si:ei]
                 try:
-                    self._index_parsed_file(pr, doc_vectors)
+                    self._index_parsed_file(pr, doc_vectors, on_status=on_status)
                     _report_progress(
                         ProcessingOutcome.INDEXED,
                         f"{len(pr.chunks)} chunks",
@@ -757,6 +760,7 @@ class PipelineRunner:
         self,
         pr: _ParsedFileResult,
         vectors: list[list[float]],
+        on_status: StatusCallback | None = None,
     ) -> None:
         """Index a parsed file: write metadata to SQLite, upsert vectors, summarize.
 
@@ -876,6 +880,10 @@ class PipelineRunner:
             self._delete_stale_points(doc_id, keep_ids)
 
         # Summarize (if enabled)
+        if on_status and self._summarizer and self._summarizer.available:
+            section_count = len([s for s in pr.normalized.sections if s.text.strip()])
+            on_status(pr.file_index, 0, Path(file_path).name, f"summarizing ({section_count} sections)...")
+
         summary_points = self._summarize_document(
             doc_id=doc_id,
             title=parsed_doc.title or path.stem,

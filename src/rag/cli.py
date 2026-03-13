@@ -397,6 +397,10 @@ class _ProgressDisplay:
         idx = f"[{file_idx:>{self._idx_w}}/{self._total}]"
         click.echo(f"  {idx} {self._fit_name(name)}  parsing...")
 
+    def on_status(self, file_idx: int, _total: int, name: str, status: str) -> None:
+        idx = f"[{file_idx:>{self._idx_w}}/{self._total}]"
+        click.echo(f"  {idx} {self._fit_name(name)}  {status}")
+
     def on_done(
         self,
         file_idx: int,
@@ -433,6 +437,7 @@ def _run_index(config: AppConfig, events: list[FileEvent]) -> None:
         events,
         progress=display.on_done,
         on_start=display.on_start,
+        on_status=display.on_status,
     )
     display.finalize()
 
