@@ -79,6 +79,8 @@ class Reranker(Protocol):
 
 
 class Parser(Protocol):
-    def parse(self, file_path: str, ocr_enabled: bool) -> ParseResult: ...
+    def parse(
+        self, file_path: str, ocr_enabled: bool, content_hash: str | None = None
+    ) -> ParseResult: ...
     @property
     def supported_types(self) -> set[FileType]: ...

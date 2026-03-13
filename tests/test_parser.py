@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 from rag.pipeline.parser.base import get_parser
 from rag.pipeline.parser.docling_parser import DoclingParser
+from rag.pipeline.parser.text_parser import TextParser
 from rag.results import ParseError, ParseSuccess
 from rag.types import FileType
 
@@ -229,3 +230,139 @@ class TestGetParser:
         parser2 = DoclingParser()
         found = get_parser(FileType.PDF, [parser1, parser2])
         assert found is parser1
+
+
+class TestDoclingParserOcrConfig:
+    """Tests for OCR enabled/disabled configuration in worker requests."""
+
+    def test_ocr_disabled_sent_to_worker(self, tmp_path: Path) -> None:
+        pdf_file = tmp_path / "no_ocr.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 content")
+
+        mock_result = {
+            "status": "success",
+            "sections": [
+                {
+                    "heading": None, "order": 0, "text": "Text.",
+                    "page_start": None, "page_end": None,
+                }
+            ],
+            "title": "No OCR Doc",
+        }
+
+        parser = DoclingParser()
+        _patch_worker(parser, mock_result)
+        parser.parse(str(pdf_file), ocr_enabled=False)
+
+        parser._pipe.send.assert_called_once()  # type: ignore[union-attr]
+        sent_args = parser._pipe.send.call_args[0][0]  # type: ignore[union-attr]
+        assert sent_args[1] is False  # ocr_enabled=False
+
+    def test_ocr_enabled_sent_to_worker(self, tmp_path: Path) -> None:
+        pdf_file = tmp_path / "with_ocr.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 content")
+
+        mock_result = {
+            "status": "success",
+            "sections": [
+                {
+                    "heading": None, "order": 0, "text": "Text.",
+                    "page_start": None, "page_end": None,
+                }
+            ],
+            "title": "OCR Doc",
+        }
+
+        parser = DoclingParser()
+        _patch_worker(parser, mock_result)
+        parser.parse(str(pdf_file), ocr_enabled=True)
+
+        parser._pipe.send.assert_called_once()  # type: ignore[union-attr]
+        sent_args = parser._pipe.send.call_args[0][0]  # type: ignore[union-attr]
+        assert sent_args[1] is True  # ocr_enabled=True
+
+
+class TestContentHashPassthrough:
+    """Tests for content_hash parameter skipping redundant SHA-256 hashing."""
+
+    def test_docling_parser_uses_provided_content_hash(self, tmp_path: Path) -> None:
+        pdf_file = tmp_path / "hashed.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 content")
+
+        mock_result = {
+            "status": "success",
+            "sections": [
+                {
+                    "heading": None, "order": 0, "text": "Text.",
+                    "page_start": None, "page_end": None,
+                }
+            ],
+            "title": "Hashed Doc",
+        }
+
+        parser = DoclingParser()
+        _patch_worker(parser, mock_result)
+        result = parser.parse(
+            str(pdf_file), ocr_enabled=False, content_hash="precomputed_hash_abc",
+        )
+
+        assert isinstance(result, ParseSuccess)
+        assert result.document.raw_content_hash == "precomputed_hash_abc"
+
+    def test_docling_parser_computes_hash_when_none(self, tmp_path: Path) -> None:
+        pdf_file = tmp_path / "nohash.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 content")
+
+        mock_result = {
+            "status": "success",
+            "sections": [
+                {
+                    "heading": None, "order": 0, "text": "Text.",
+                    "page_start": None, "page_end": None,
+                }
+            ],
+            "title": "No Hash Doc",
+        }
+
+        parser = DoclingParser()
+        _patch_worker(parser, mock_result)
+        result = parser.parse(str(pdf_file), ocr_enabled=False, content_hash=None)
+
+        assert isinstance(result, ParseSuccess)
+        # Should be a real SHA-256 hex digest (64 chars)
+        assert len(result.document.raw_content_hash) == 64
+        assert result.document.raw_content_hash != "precomputed_hash_abc"
+
+    def test_text_parser_uses_provided_content_hash(self, tmp_path: Path) -> None:
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("Hello world")
+
+        parser = TextParser()
+        result = parser.parse(
+            str(txt_file), ocr_enabled=False, content_hash="precomputed_hash_xyz",
+        )
+
+        assert isinstance(result, ParseSuccess)
+        assert result.document.raw_content_hash == "precomputed_hash_xyz"
+
+    def test_text_parser_computes_hash_when_none(self, tmp_path: Path) -> None:
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("Hello world")
+
+        parser = TextParser()
+        result = parser.parse(str(txt_file), ocr_enabled=False, content_hash=None)
+
+        assert isinstance(result, ParseSuccess)
+        # Should be a real SHA-256 hex digest (64 chars)
+        assert len(result.document.raw_content_hash) == 64
+
+    def test_text_parser_default_content_hash_is_none(self, tmp_path: Path) -> None:
+        """Calling parse without content_hash should still compute the hash."""
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("Hello world")
+
+        parser = TextParser()
+        result = parser.parse(str(txt_file), ocr_enabled=False)
+
+        assert isinstance(result, ParseSuccess)
+        assert len(result.document.raw_content_hash) == 64

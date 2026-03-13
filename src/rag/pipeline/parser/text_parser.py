@@ -16,7 +16,12 @@ class TextParser:
     def supported_types(self) -> set[FileType]:
         return {FileType.TXT, FileType.MD}
 
-    def parse(self, file_path: str, ocr_enabled: bool) -> ParseSuccess | ParseError:
+    def parse(
+        self,
+        file_path: str,
+        ocr_enabled: bool,
+        content_hash: str | None = None,
+    ) -> ParseSuccess | ParseError:
         path = Path(file_path)
         if not path.is_file():
             return ParseError(error=f"File not found: {file_path}", file_path=file_path)
@@ -34,7 +39,11 @@ class TextParser:
         if not content.strip():
             return ParseError(error="File is empty", file_path=file_path)
 
-        raw_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        # Use pre-computed hash when available, otherwise compute it
+        if content_hash is not None:
+            raw_hash = content_hash
+        else:
+            raw_hash = hashlib.sha256(path.read_bytes()).hexdigest()
 
         ext = path.suffix.lower().lstrip(".")
         file_type = FileType(ext)

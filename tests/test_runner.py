@@ -6,10 +6,19 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
+from rag.config import SummarizationConfig
 from rag.pipeline.classifier import classify
 from rag.pipeline.dedup import DedupChecker
 from rag.pipeline.runner import PipelineRunner
-from rag.results import ParseError, ParseSuccess
+from rag.results import (
+    ParseError,
+    ParseSuccess,
+    SectionSummaryError,
+    SectionSummarySuccess,
+    SummarySuccess,
+)
 from rag.types import (
     FileEvent,
     FileType,
@@ -154,6 +163,19 @@ class TestProcessFile:
         assert outcome == ProcessingOutcome.INDEXED
         assert "chunk" in detail
         mocks["parser"].parse.assert_called_once()
+
+    def test_content_hash_forwarded_to_parser(self, tmp_path: Path) -> None:
+        """Verify that the runner passes event.content_hash to parser.parse()."""
+        conn = _create_db()
+        event = _make_event(tmp_path)
+        runner, mocks = _make_runner(tmp_path, conn)
+
+        runner.process_file(event)
+
+        mocks["parser"].parse.assert_called_once()
+        call_kwargs = mocks["parser"].parse.call_args
+        # content_hash should be passed as a keyword argument
+        assert call_kwargs[1]["content_hash"] == "abc123hash"
         mocks["embedder"].embed_batch.assert_called_once()
         mocks["vector_store"].upsert_points.assert_called_once()
 
@@ -315,7 +337,9 @@ class TestProcessBatch:
         # Make second parse unique doc_id so dedup doesn't kick in
         call_count = 0
 
-        def side_effect_parse(fp: str, ocr: bool) -> ParseSuccess:
+        def side_effect_parse(
+            fp: str, ocr: bool, content_hash: str | None = None,
+        ) -> ParseSuccess:
             nonlocal call_count
             call_count += 1
             doc = _make_parsed_doc(fp)
@@ -358,7 +382,9 @@ class TestProcessBatch:
 
         call_count = 0
 
-        def side_effect_parse(fp: str, ocr: bool) -> ParseSuccess | ParseError:
+        def side_effect_parse(
+            fp: str, ocr: bool, content_hash: str | None = None,
+        ) -> ParseSuccess | ParseError:
             nonlocal call_count
             call_count += 1
             if "bad" in fp:
@@ -389,3 +415,682 @@ class TestProcessBatch:
         assert len(calls) == 1
         assert calls[0][0:3] == (1, 1, "test.txt")
         assert calls[0][3] == ProcessingOutcome.INDEXED
+
+
+# --- Helpers for summarization tests ---
+
+
+def _make_parsed_doc_with_sections(file_path: str, num_sections: int = 3) -> ParsedDocument:
+    """Create a ParsedDocument with multiple sections for summarization tests."""
+    sections = [
+        ParsedSection(
+            heading=f"Section {i}",
+            order=i,
+            text=f"Content for section {i} with enough text to be meaningful.",
+        )
+        for i in range(num_sections)
+    ]
+    return ParsedDocument(
+        doc_id=str(uuid.uuid4()),
+        title="Multi-Section Doc",
+        file_type=FileType.TXT,
+        sections=sections,
+        raw_content_hash="rawhash_multi",
+    )
+
+
+def _make_runner_with_summarizer(
+    tmp_path: Path,
+    conn: sqlite3.Connection,
+    *,
+    summarizer: MagicMock | None = None,
+    num_sections: int = 3,
+) -> tuple[PipelineRunner, dict[str, Any]]:
+    """Build a PipelineRunner with a mock summarizer."""
+    from rag.config import AppConfig, FoldersConfig
+    from rag.db.models import SqliteMetadataDB
+
+    db = SqliteMetadataDB(conn)
+    dedup = DedupChecker(conn)
+
+    mock_embedder = MagicMock()
+    # Return a unique vector for each text
+    mock_embedder.embed_batch.side_effect = lambda texts: [
+        [float(i) * 0.1] * 3 for i in range(len(texts))
+    ]
+    mock_embedder.model_version = "test-model-v1"
+    mock_embedder.dimensions = 3
+
+    mock_vector_store = MagicMock()
+
+    doc = _make_parsed_doc_with_sections(str(tmp_path / "test.txt"), num_sections)
+    mock_parser = MagicMock()
+    mock_parser.supported_types = {FileType.TXT, FileType.MD}
+    mock_parser.parse.return_value = ParseSuccess(document=doc)
+
+    config = AppConfig(folders=FoldersConfig(paths=[tmp_path]))
+
+    runner = PipelineRunner(
+        db=db,
+        vector_store=mock_vector_store,
+        embedder=mock_embedder,
+        parsers=[mock_parser],
+        dedup=dedup,
+        config=config,
+        summarizer=summarizer,
+    )
+
+    mocks = {
+        "db": db,
+        "dedup": dedup,
+        "embedder": mock_embedder,
+        "vector_store": mock_vector_store,
+        "parser": mock_parser,
+        "doc": doc,
+    }
+    return runner, mocks
+
+
+class TestSummarizationBatchEmbedding:
+    """Tests for batched summary embeddings and parallel summarization."""
+
+    def test_embed_batch_called_once_with_all_summaries(self, tmp_path: Path) -> None:
+        """embed_batch should be called ONCE for all summary texts (not N times)."""
+        conn = _create_db()
+        num_sections = 3
+
+        mock_summarizer = MagicMock()
+        mock_summarizer.available = True
+        mock_summarizer.summarize_document.return_value = SummarySuccess(
+            summary_l1="Short",
+            summary_l2="Medium summary.",
+            summary_l3="Long detailed summary of the document.",
+            key_topics=["topic1"],
+            doc_type_guess="report",
+        )
+        mock_summarizer.summarize_section.return_value = SectionSummarySuccess(
+            section_summary="Section summary text.",
+            section_summary_l2="Short section",
+        )
+
+        runner, mocks = _make_runner_with_summarizer(
+            tmp_path, conn, summarizer=mock_summarizer, num_sections=num_sections
+        )
+        event = _make_event(tmp_path)
+        outcome, _detail = runner.process_file(event)
+        assert outcome == ProcessingOutcome.INDEXED
+
+        # embed_batch is called twice: once for chunks, once for ALL summaries
+        embed_calls = mocks["embedder"].embed_batch.call_args_list
+
+        # First call is for chunks (from process_file step 10)
+        # Second call is for all summaries (1 doc + 3 sections = 4 texts)
+        assert len(embed_calls) == 2, f"Expected 2 embed_batch calls, got {len(embed_calls)}"
+
+        summary_call_texts = embed_calls[1][0][0]  # positional arg 0 of second call
+        # 1 doc summary + 3 section summaries = 4 total
+        assert len(summary_call_texts) == 1 + num_sections, (
+            f"Expected {1 + num_sections} summary texts, got {len(summary_call_texts)}"
+        )
+
+    def test_no_summarizer_returns_empty(self, tmp_path: Path) -> None:
+        """When summarizer is None, _summarize_document returns empty list."""
+        conn = _create_db()
+        runner, mocks = _make_runner_with_summarizer(
+            tmp_path, conn, summarizer=None, num_sections=2
+        )
+        event = _make_event(tmp_path)
+        outcome, _detail = runner.process_file(event)
+        assert outcome == ProcessingOutcome.INDEXED
+
+        # embed_batch called only once (for chunks), not for summaries
+        assert mocks["embedder"].embed_batch.call_count == 1
+
+    def test_unavailable_summarizer_returns_empty(self, tmp_path: Path) -> None:
+        """When summarizer.available is False, returns empty list."""
+        conn = _create_db()
+        mock_summarizer = MagicMock()
+        mock_summarizer.available = False
+
+        runner, mocks = _make_runner_with_summarizer(
+            tmp_path, conn, summarizer=mock_summarizer, num_sections=2
+        )
+        event = _make_event(tmp_path)
+        outcome, _detail = runner.process_file(event)
+        assert outcome == ProcessingOutcome.INDEXED
+
+        # Summarizer should not be called
+        mock_summarizer.summarize_document.assert_not_called()
+        assert mocks["embedder"].embed_batch.call_count == 1
+
+    def test_section_failure_does_not_block_others(self, tmp_path: Path) -> None:
+        """If one section summary fails, other sections still produce points."""
+        conn = _create_db()
+        num_sections = 3
+
+        mock_summarizer = MagicMock()
+        mock_summarizer.available = True
+        mock_summarizer.summarize_document.return_value = SummarySuccess(
+            summary_l1="Short",
+            summary_l2="Medium.",
+            summary_l3="Long doc summary.",
+            key_topics=["t1"],
+            doc_type_guess="notes",
+        )
+
+        call_count = 0
+
+        def section_side_effect(
+            text: str, heading: str | None, doc_context: str,
+        ) -> SectionSummarySuccess | SectionSummaryError:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                return SectionSummaryError(error="LLM timeout")
+            return SectionSummarySuccess(
+                section_summary=f"Summary for call {call_count}",
+                section_summary_l2="Short",
+            )
+
+        mock_summarizer.summarize_section.side_effect = section_side_effect
+
+        runner, mocks = _make_runner_with_summarizer(
+            tmp_path, conn, summarizer=mock_summarizer, num_sections=num_sections
+        )
+        event = _make_event(tmp_path)
+        outcome, _detail = runner.process_file(event)
+        assert outcome == ProcessingOutcome.INDEXED
+
+        # embed_batch for summaries: 1 doc + 2 successful sections = 3
+        summary_call = mocks["embedder"].embed_batch.call_args_list[1]
+        summary_texts = summary_call[0][0]
+        assert len(summary_texts) == 3, f"Expected 3 summary texts, got {len(summary_texts)}"
+
+    def test_section_exception_does_not_block_others(self, tmp_path: Path) -> None:
+        """If a section summary raises an exception, other sections still complete."""
+        conn = _create_db()
+        num_sections = 3
+
+        mock_summarizer = MagicMock()
+        mock_summarizer.available = True
+        mock_summarizer.summarize_document.return_value = SummarySuccess(
+            summary_l1="Short",
+            summary_l2="Medium.",
+            summary_l3="Long doc summary.",
+            key_topics=["t1"],
+            doc_type_guess="notes",
+        )
+
+        call_count = 0
+
+        def section_side_effect(
+            text: str, heading: str | None, doc_context: str,
+        ) -> SectionSummarySuccess | SectionSummaryError:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                msg = "Subprocess crashed"
+                raise RuntimeError(msg)
+            return SectionSummarySuccess(
+                section_summary=f"Summary for call {call_count}",
+                section_summary_l2="Short",
+            )
+
+        mock_summarizer.summarize_section.side_effect = section_side_effect
+
+        runner, mocks = _make_runner_with_summarizer(
+            tmp_path, conn, summarizer=mock_summarizer, num_sections=num_sections
+        )
+        event = _make_event(tmp_path)
+        outcome, _detail = runner.process_file(event)
+        assert outcome == ProcessingOutcome.INDEXED
+
+        # embed_batch for summaries: 1 doc + 2 successful sections = 3
+        summary_call = mocks["embedder"].embed_batch.call_args_list[1]
+        summary_texts = summary_call[0][0]
+        assert len(summary_texts) == 3
+
+    def test_doc_summary_failure_still_embeds_sections(self, tmp_path: Path) -> None:
+        """If document summary fails, section summaries still get embedded."""
+        conn = _create_db()
+        num_sections = 2
+        from rag.results import SummaryError
+
+        mock_summarizer = MagicMock()
+        mock_summarizer.available = True
+        mock_summarizer.summarize_document.return_value = SummaryError(error="timeout")
+        mock_summarizer.summarize_section.return_value = SectionSummarySuccess(
+            section_summary="Section summary.",
+            section_summary_l2="Short",
+        )
+
+        runner, mocks = _make_runner_with_summarizer(
+            tmp_path, conn, summarizer=mock_summarizer, num_sections=num_sections
+        )
+        event = _make_event(tmp_path)
+        outcome, _detail = runner.process_file(event)
+        assert outcome == ProcessingOutcome.INDEXED
+
+        # embed_batch for summaries: 0 doc + 2 sections = 2
+        summary_call = mocks["embedder"].embed_batch.call_args_list[1]
+        summary_texts = summary_call[0][0]
+        assert len(summary_texts) == num_sections
+
+    def test_parallel_produces_same_results(self, tmp_path: Path) -> None:
+        """Parallel summarization should produce same vector points as would sequential."""
+        conn = _create_db()
+        num_sections = 4
+
+        mock_summarizer = MagicMock()
+        mock_summarizer.available = True
+        mock_summarizer.summarize_document.return_value = SummarySuccess(
+            summary_l1="Short",
+            summary_l2="Medium.",
+            summary_l3="Long doc summary.",
+            key_topics=["t1"],
+            doc_type_guess="report",
+        )
+
+        def section_side_effect(
+            text: str, heading: str | None, doc_context: str,
+        ) -> SectionSummarySuccess | SectionSummaryError:
+            return SectionSummarySuccess(
+                section_summary=f"Summary of {heading}",
+                section_summary_l2=f"Short {heading}",
+            )
+
+        mock_summarizer.summarize_section.side_effect = section_side_effect
+
+        runner, mocks = _make_runner_with_summarizer(
+            tmp_path, conn, summarizer=mock_summarizer, num_sections=num_sections
+        )
+        event = _make_event(tmp_path)
+        outcome, _detail = runner.process_file(event)
+        assert outcome == ProcessingOutcome.INDEXED
+
+        # Check the summary embed_batch call
+        summary_call = mocks["embedder"].embed_batch.call_args_list[1]
+        summary_texts = summary_call[0][0]
+        # First text is doc summary, then sections in order
+        assert summary_texts[0] == "Long doc summary."
+        for i in range(num_sections):
+            assert summary_texts[i + 1] == f"Summary of Section {i}"
+
+
+class TestMaxWorkersConfig:
+    """Tests for max_workers config validation."""
+
+    def test_default_max_workers(self) -> None:
+        config = SummarizationConfig()
+        assert config.max_workers == 3
+
+    def test_max_workers_min_valid(self) -> None:
+        config = SummarizationConfig(max_workers=1)
+        assert config.max_workers == 1
+
+    def test_max_workers_max_valid(self) -> None:
+        config = SummarizationConfig(max_workers=5)
+        assert config.max_workers == 5
+
+    def test_max_workers_below_min_raises(self) -> None:
+        with pytest.raises(Exception):  # noqa: B017
+            SummarizationConfig(max_workers=0)
+
+    def test_max_workers_above_max_raises(self) -> None:
+        with pytest.raises(Exception):  # noqa: B017
+            SummarizationConfig(max_workers=6)
+
+
+class TestPipelineParallelism:
+    """Tests for producer-consumer pipeline parallelism in process_batch."""
+
+    def test_parallel_batch_same_results_as_sequential(self, tmp_path: Path) -> None:
+        """Pipeline parallelism should produce the same outcomes as sequential."""
+        conn = _create_db()
+
+        files = []
+        events = []
+        for i in range(4):
+            f = tmp_path / f"file_{i}.txt"
+            f.write_text(f"Content for file {i} with unique text.")
+            files.append(f)
+            events.append(
+                FileEvent(
+                    file_path=str(f),
+                    content_hash=f"hash_{i}",
+                    file_type=FileType.TXT,
+                    event_type="created",
+                    modified_at="2026-01-01T00:00:00+00:00",
+                )
+            )
+
+        runner, mocks = _make_runner(tmp_path, conn)
+        call_count = 0
+
+        def side_effect_parse(
+            fp: str, ocr: bool, content_hash: str | None = None,
+        ) -> ParseSuccess:
+            nonlocal call_count
+            call_count += 1
+            doc = _make_parsed_doc(fp)
+            doc = doc.model_copy(update={"raw_content_hash": f"unique_{call_count}"})
+            return ParseSuccess(document=doc)
+
+        mocks["parser"].parse.side_effect = side_effect_parse
+
+        counts = runner.process_batch(events)
+
+        total_processed = sum(counts.values())
+        assert total_processed == 4
+        assert counts[ProcessingOutcome.ERROR] == 0
+        assert counts[ProcessingOutcome.INDEXED] + counts[ProcessingOutcome.DUPLICATE] == 4
+
+    def test_cross_document_batching_combines_chunks(self, tmp_path: Path) -> None:
+        """embed_batch should be called with chunks from multiple documents combined."""
+        from rag.config import AppConfig, EmbeddingConfig, FoldersConfig
+        from rag.db.models import SqliteMetadataDB
+
+        conn = _create_db()
+        db = SqliteMetadataDB(conn)
+        dedup = DedupChecker(conn)
+
+        mock_embedder = MagicMock()
+        # Return a vector for each text
+        mock_embedder.embed_batch.side_effect = lambda texts: [
+            [0.1] * 3 for _ in texts
+        ]
+        mock_embedder.model_version = "test-model-v1"
+
+        mock_vector_store = MagicMock()
+
+        mock_parser = MagicMock()
+        mock_parser.supported_types = {FileType.TXT, FileType.MD}
+
+        call_count = 0
+
+        def _make_unique_doc(fp: str, idx: int) -> ParsedDocument:
+            """Create a doc with unique content so dedup doesn't trigger."""
+            return ParsedDocument(
+                doc_id=str(uuid.uuid4()),
+                title=f"Document {idx}",
+                file_type=FileType.TXT,
+                sections=[
+                    ParsedSection(
+                        heading=f"Section for doc {idx}",
+                        order=0,
+                        text=(
+                            f"Unique content for document number {idx}."
+                            " It contains enough text to form at least one chunk."
+                        ),
+                    ),
+                ],
+                raw_content_hash=f"raw_unique_{idx}",
+            )
+
+        def side_effect_parse(
+            fp: str, ocr: bool, content_hash: str | None = None,
+        ) -> ParseSuccess:
+            nonlocal call_count
+            call_count += 1
+            doc = _make_unique_doc(fp, call_count)
+            return ParseSuccess(document=doc)
+
+        mock_parser.parse.side_effect = side_effect_parse
+
+        # Set batch_size very large so all chunks accumulate in one batch
+        config = AppConfig(
+            folders=FoldersConfig(paths=[tmp_path]),
+            embedding=EmbeddingConfig(batch_size=1000),
+        )
+
+        runner = PipelineRunner(
+            db=db,
+            vector_store=mock_vector_store,
+            embedder=mock_embedder,
+            parsers=[mock_parser],
+            dedup=dedup,
+            config=config,
+        )
+
+        # Create 3 files
+        events = []
+        for i in range(3):
+            f = tmp_path / f"doc_{i}.txt"
+            f.write_text(f"Content for document {i} that is unique.")
+            events.append(
+                FileEvent(
+                    file_path=str(f),
+                    content_hash=f"hash_{i}",
+                    file_type=FileType.TXT,
+                    event_type="created",
+                    modified_at="2026-01-01T00:00:00+00:00",
+                )
+            )
+
+        counts = runner.process_batch(events)
+        assert counts[ProcessingOutcome.INDEXED] == 3
+        assert counts[ProcessingOutcome.ERROR] == 0
+
+        # With batch_size=1000, all chunks should be embedded in a single call
+        # (since 3 small docs will have few chunks total)
+        embed_calls = mock_embedder.embed_batch.call_args_list
+        assert len(embed_calls) == 1, (
+            f"Expected 1 embed_batch call for cross-doc batching, got {len(embed_calls)}"
+        )
+        # The single call should contain chunks from all 3 documents
+        total_texts = len(embed_calls[0][0][0])
+        assert total_texts >= 3, f"Expected at least 3 texts batched, got {total_texts}"
+
+    def test_error_in_one_file_does_not_block_others(self, tmp_path: Path) -> None:
+        """If parsing fails for one file, other files should still be processed."""
+        conn = _create_db()
+
+        f_good1 = tmp_path / "good1.txt"
+        f_good1.write_text("Good content one")
+        f_bad = tmp_path / "bad.txt"
+        f_bad.write_text("Bad content")
+        f_good2 = tmp_path / "good2.txt"
+        f_good2.write_text("Good content two")
+
+        events = [
+            FileEvent(
+                file_path=str(f_good1),
+                content_hash="hash_good1",
+                file_type=FileType.TXT,
+                event_type="created",
+                modified_at="2026-01-01T00:00:00+00:00",
+            ),
+            FileEvent(
+                file_path=str(f_bad),
+                content_hash="hash_bad",
+                file_type=FileType.TXT,
+                event_type="created",
+                modified_at="2026-01-01T00:00:00+00:00",
+            ),
+            FileEvent(
+                file_path=str(f_good2),
+                content_hash="hash_good2",
+                file_type=FileType.TXT,
+                event_type="created",
+                modified_at="2026-01-01T00:00:00+00:00",
+            ),
+        ]
+
+        runner, mocks = _make_runner(tmp_path, conn)
+        call_count = 0
+
+        def side_effect_parse(
+            fp: str, ocr: bool, content_hash: str | None = None,
+        ) -> ParseSuccess | ParseError:
+            nonlocal call_count
+            call_count += 1
+            if "bad" in fp:
+                return ParseError(error="corrupt file", file_path=fp)
+            doc = _make_parsed_doc(fp)
+            doc = doc.model_copy(update={"raw_content_hash": f"unique_{call_count}"})
+            return ParseSuccess(document=doc)
+
+        mocks["parser"].parse.side_effect = side_effect_parse
+
+        counts = runner.process_batch(events)
+        assert counts[ProcessingOutcome.ERROR] == 1
+        assert counts[ProcessingOutcome.INDEXED] + counts[ProcessingOutcome.DUPLICATE] == 2
+
+    def test_single_file_still_works_via_process_file(self, tmp_path: Path) -> None:
+        """process_file should still work for single-file indexing."""
+        conn = _create_db()
+        event = _make_event(tmp_path)
+        runner, mocks = _make_runner(tmp_path, conn)
+
+        outcome, detail = runner.process_file(event)
+
+        assert outcome == ProcessingOutcome.INDEXED
+        assert "chunk" in detail
+        mocks["parser"].parse.assert_called_once()
+        mocks["embedder"].embed_batch.assert_called_once()
+        mocks["vector_store"].upsert_points.assert_called_once()
+
+    def test_progress_callback_in_parallel_batch(self, tmp_path: Path) -> None:
+        """Progress callback should be called correctly with parallel batch."""
+        conn = _create_db()
+
+        events = []
+        for i in range(3):
+            f = tmp_path / f"prog_{i}.txt"
+            f.write_text(f"Progress test content {i}")
+            events.append(
+                FileEvent(
+                    file_path=str(f),
+                    content_hash=f"prog_hash_{i}",
+                    file_type=FileType.TXT,
+                    event_type="created",
+                    modified_at="2026-01-01T00:00:00+00:00",
+                )
+            )
+
+        runner, mocks = _make_runner(tmp_path, conn)
+        call_count = 0
+
+        def side_effect_parse(
+            fp: str, ocr: bool, content_hash: str | None = None,
+        ) -> ParseSuccess:
+            nonlocal call_count
+            call_count += 1
+            doc = _make_parsed_doc(fp)
+            doc = doc.model_copy(update={"raw_content_hash": f"prog_unique_{call_count}"})
+            return ParseSuccess(document=doc)
+
+        mocks["parser"].parse.side_effect = side_effect_parse
+
+        calls: list[tuple[int, int, str, ProcessingOutcome, str]] = []
+
+        def on_progress(
+            current: int, total: int, filename: str,
+            outcome: ProcessingOutcome, detail: str,
+        ) -> None:
+            calls.append((current, total, filename, outcome, detail))
+
+        runner.process_batch(events, progress=on_progress)
+
+        assert len(calls) == 3
+        # All calls should have total=3
+        for c in calls:
+            assert c[1] == 3
+        # current values should be 1, 2, 3 (in some order since parallel)
+        currents = sorted(c[0] for c in calls)
+        assert currents == [1, 2, 3]
+
+    def test_empty_batch_returns_zero_counts(self, tmp_path: Path) -> None:
+        """Empty event list should return zero counts without errors."""
+        conn = _create_db()
+        runner, _mocks = _make_runner(tmp_path, conn)
+
+        counts = runner.process_batch([])
+        assert all(v == 0 for v in counts.values())
+
+    def test_batch_with_small_batch_size_triggers_multiple_embeds(
+        self, tmp_path: Path,
+    ) -> None:
+        """When batch_size is small, embed_batch should be called multiple times."""
+        from rag.config import AppConfig, EmbeddingConfig, FoldersConfig
+        from rag.db.models import SqliteMetadataDB
+
+        conn = _create_db()
+        db = SqliteMetadataDB(conn)
+        dedup = DedupChecker(conn)
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_batch.side_effect = lambda texts: [
+            [0.1] * 3 for _ in texts
+        ]
+        mock_embedder.model_version = "test-model-v1"
+
+        mock_vector_store = MagicMock()
+        mock_parser = MagicMock()
+        mock_parser.supported_types = {FileType.TXT, FileType.MD}
+
+        call_count = 0
+
+        def side_effect_parse(
+            fp: str, ocr: bool, content_hash: str | None = None,
+        ) -> ParseSuccess:
+            nonlocal call_count
+            call_count += 1
+            doc = ParsedDocument(
+                doc_id=str(uuid.uuid4()),
+                title=f"Small Batch Doc {call_count}",
+                file_type=FileType.TXT,
+                sections=[
+                    ParsedSection(
+                        heading=f"Section {call_count}",
+                        order=0,
+                        text=(
+                            f"Unique small batch content number {call_count}."
+                            " Extra text to form a chunk."
+                        ),
+                    ),
+                ],
+                raw_content_hash=f"small_batch_raw_{call_count}",
+            )
+            return ParseSuccess(document=doc)
+
+        mock_parser.parse.side_effect = side_effect_parse
+
+        # Set batch_size=1 so each document's chunks trigger a flush
+        config = AppConfig(
+            folders=FoldersConfig(paths=[tmp_path]),
+            embedding=EmbeddingConfig(batch_size=1),
+        )
+
+        runner = PipelineRunner(
+            db=db,
+            vector_store=mock_vector_store,
+            embedder=mock_embedder,
+            parsers=[mock_parser],
+            dedup=dedup,
+            config=config,
+        )
+
+        events = []
+        for i in range(3):
+            f = tmp_path / f"small_{i}.txt"
+            f.write_text(f"Small batch content {i}")
+            events.append(
+                FileEvent(
+                    file_path=str(f),
+                    content_hash=f"small_hash_{i}",
+                    file_type=FileType.TXT,
+                    event_type="created",
+                    modified_at="2026-01-01T00:00:00+00:00",
+                )
+            )
+
+        counts = runner.process_batch(events)
+        assert counts[ProcessingOutcome.ERROR] == 0
+        assert counts[ProcessingOutcome.INDEXED] == 3
+
+        # With batch_size=1, each document should trigger its own embed call
+        embed_call_count = mock_embedder.embed_batch.call_count
+        assert embed_call_count >= 2, (
+            f"Expected multiple embed_batch calls with small batch_size, got {embed_call_count}"
+        )

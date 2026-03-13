@@ -56,4 +56,7 @@ class DedupChecker:
                VALUES (?, ?, ?, ?)""",
             (file_path, raw_hash, normalized_hash, canonical_doc_id),
         )
+
+    def flush(self) -> None:
+        """Commit any pending writes to the database."""
         self._conn.commit()

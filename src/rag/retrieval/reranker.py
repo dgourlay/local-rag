@@ -5,6 +5,8 @@ import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    import types
+
     import onnxruntime as ort
 
     from rag.config import RerankerConfig
@@ -42,9 +44,10 @@ class OnnxReranker:
                 )
                 raise FileNotFoundError(msg)
 
+        providers = self._resolve_providers(ort)
         self._session = ort.InferenceSession(
             onnx_path,
-            providers=["CPUExecutionProvider"],
+            providers=providers,
         )
         # Suppress spurious "incorrect regex pattern" warning from transformers
         # (the fix_mistral_regex flag crashes on this tokenizer type)
@@ -56,6 +59,21 @@ class OnnxReranker:
         finally:
             _tf_logger.setLevel(prev_level)
         logger.info("Loaded reranker model from %s", model_path)
+
+    def _resolve_providers(self, ort: types.ModuleType) -> list[str]:
+        """Build the list of ONNX execution providers based on config."""
+        providers: list[str] = []
+        if self._config.use_coreml:
+            available = ort.get_available_providers()
+            if "CoreMLExecutionProvider" in available:
+                providers.append("CoreMLExecutionProvider")
+                logger.info("Using CoreMLExecutionProvider for reranker")
+            else:
+                logger.info(
+                    "CoreML requested but not available, falling back to CPU"
+                )
+        providers.append("CPUExecutionProvider")
+        return providers
 
     @staticmethod
     def _resolve_onnx_path(model_path: str) -> str | None:

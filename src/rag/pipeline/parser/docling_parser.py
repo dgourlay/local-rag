@@ -27,11 +27,12 @@ def _worker_loop(
 
     Protocol: receives (file_path, ocr_enabled) tuples, sends back result dicts.
     A None request signals the worker to exit.
+    Lazily caches two converters: one with OCR enabled, one without.
     """
     try:
-        from docling.document_converter import DocumentConverter
-
-        converter = DocumentConverter()
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.document_converter import DocumentConverter, PdfFormatOption
     except Exception as e:
         # Signal that init failed — send error for any request until we exit
         while True:
@@ -44,6 +45,24 @@ def _worker_loop(
             request_pipe.send({"status": "error", "error": f"Docling init failed: {e}"})
         return
 
+    # Lazily-created converters: keyed by ocr_enabled bool
+    converters: dict[bool, DocumentConverter] = {}
+
+    def _get_converter(ocr_enabled: bool) -> DocumentConverter:
+        if ocr_enabled not in converters:
+            if ocr_enabled:
+                converters[ocr_enabled] = DocumentConverter()
+            else:
+                pipeline_options = PdfPipelineOptions(do_ocr=False)
+                converters[ocr_enabled] = DocumentConverter(
+                    format_options={
+                        InputFormat.PDF: PdfFormatOption(
+                            pipeline_options=pipeline_options,
+                        ),
+                    },
+                )
+        return converters[ocr_enabled]
+
     while True:
         try:
             req = request_pipe.recv()
@@ -52,8 +71,9 @@ def _worker_loop(
         if req is None:
             return
 
-        file_path, _ocr_enabled = req
+        file_path, ocr_enabled = req
         try:
+            converter = _get_converter(ocr_enabled)
             result = converter.convert(file_path)
             doc = result.document
 
@@ -179,17 +199,25 @@ class DoclingParser:
                 self._worker.join(timeout=5)
             self._worker = None
 
-    def parse(self, file_path: str, ocr_enabled: bool) -> ParseSuccess | ParseError:
+    def parse(
+        self,
+        file_path: str,
+        ocr_enabled: bool,
+        content_hash: str | None = None,
+    ) -> ParseSuccess | ParseError:
         path = Path(file_path)
         if not path.is_file():
             return ParseError(error=f"File not found: {file_path}", file_path=file_path)
 
-        # Compute content hash
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for block in iter(lambda: f.read(8192), b""):
-                h.update(block)
-        raw_hash = h.hexdigest()
+        # Use pre-computed hash when available, otherwise compute it
+        if content_hash is not None:
+            raw_hash = content_hash
+        else:
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                for block in iter(lambda: f.read(8192), b""):
+                    h.update(block)
+            raw_hash = h.hexdigest()
 
         # Send request to persistent worker
         try:

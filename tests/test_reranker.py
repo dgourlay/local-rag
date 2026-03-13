@@ -137,3 +137,52 @@ class TestOnnxReranker:
         result = reranker.rerank("query", candidates, top_k=2)
         assert len(result) == 2
         assert result[0].point_id == "p0"  # logit 2.0 > -1.0
+
+
+class TestCoreMLProvider:
+    def test_use_coreml_false_uses_only_cpu(self) -> None:
+        config = RerankerConfig(model_path=Path("/tmp/fake-model"), use_coreml=False)
+        reranker = OnnxReranker(config)
+        mock_ort = MagicMock()
+        providers = reranker._resolve_providers(mock_ort)
+        assert providers == ["CPUExecutionProvider"]
+        mock_ort.get_available_providers.assert_not_called()
+
+    def test_use_coreml_true_adds_coreml_when_available(self) -> None:
+        config = RerankerConfig(model_path=Path("/tmp/fake-model"), use_coreml=True)
+        reranker = OnnxReranker(config)
+        mock_ort = MagicMock()
+        mock_ort.get_available_providers.return_value = [
+            "CoreMLExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+        providers = reranker._resolve_providers(mock_ort)
+        assert providers == ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+
+    def test_use_coreml_true_falls_back_when_not_available(self) -> None:
+        config = RerankerConfig(model_path=Path("/tmp/fake-model"), use_coreml=True)
+        reranker = OnnxReranker(config)
+        mock_ort = MagicMock()
+        mock_ort.get_available_providers.return_value = ["CPUExecutionProvider"]
+        providers = reranker._resolve_providers(mock_ort)
+        assert providers == ["CPUExecutionProvider"]
+
+    def test_use_coreml_default_is_false(self) -> None:
+        config = RerankerConfig(model_path=Path("/tmp/fake-model"))
+        assert config.use_coreml is False
+
+    def test_coreml_provider_order_is_before_cpu(self) -> None:
+        config = RerankerConfig(
+            model_path=Path("/tmp/fake-model"),
+            use_coreml=True,
+        )
+        reranker = OnnxReranker(config)
+        mock_ort = MagicMock()
+        mock_ort.get_available_providers.return_value = [
+            "CoreMLExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+        providers = reranker._resolve_providers(mock_ort)
+        coreml_idx = providers.index("CoreMLExecutionProvider")
+        cpu_idx = providers.index("CPUExecutionProvider")
+        assert coreml_idx < cpu_idx

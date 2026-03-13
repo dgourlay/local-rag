@@ -1,11 +1,30 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
     from rag.config import EmbeddingConfig
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_device(device: str) -> str:
+    """Resolve device string, detecting MPS availability when device is 'auto'."""
+    if device != "auto":
+        return device
+    try:
+        import torch
+
+        if torch.backends.mps.is_available():
+            logger.info("Auto-detected MPS (Metal) device")
+            return "mps"
+    except (ImportError, AttributeError):
+        pass
+    logger.info("Auto-detected device: cpu")
+    return "cpu"
 
 
 class SentenceTransformerEmbedder:
@@ -19,9 +38,17 @@ class SentenceTransformerEmbedder:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
+            resolved_device = _resolve_device(self._config.device)
+            model_kwargs: dict[str, object] = {}
+            if self._config.fp16:
+                import torch
+
+                model_kwargs["torch_dtype"] = torch.float16
             self._model = SentenceTransformer(
                 self._config.model,
                 cache_folder=str(self._config.cache_dir),
+                device=resolved_device,
+                model_kwargs=model_kwargs if model_kwargs else None,
             )
         return self._model
 

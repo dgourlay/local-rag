@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from rag.types import FileType
 
@@ -40,6 +40,8 @@ class EmbeddingConfig(BaseModel):
     dimensions: int = 1024
     batch_size: int = 32
     cache_dir: Path = Path("~/.cache/local-rag/models")
+    device: Literal["cpu", "mps", "auto"] = "cpu"
+    fp16: bool = True
 
     @model_validator(mode="after")
     def expand_paths(self) -> EmbeddingConfig:
@@ -51,6 +53,7 @@ class RerankerConfig(BaseModel):
     model_path: Path = Path("~/.cache/local-rag/models/bge-reranker-v2-m3")
     top_k_candidates: int = 30
     top_k_final: int = 10
+    use_coreml: bool = False
 
     @model_validator(mode="after")
     def validate_and_expand(self) -> RerankerConfig:
@@ -71,6 +74,7 @@ class SummarizationConfig(BaseModel):
     args: list[str] | None = None
     input_mode: Literal["stdin", "arg"] | None = None
     timeout_seconds: int = 60
+    max_workers: int = Field(default=3, ge=1, le=5)
 
     @model_validator(mode="after")
     def _apply_preset_defaults(self) -> SummarizationConfig:
