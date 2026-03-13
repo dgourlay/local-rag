@@ -29,6 +29,10 @@ def _worker_loop(
     A None request signals the worker to exit.
     Lazily caches two converters: one with OCR enabled, one without.
     """
+    import warnings
+
+    warnings.filterwarnings("ignore", message=".*DrawingML.*")
+
     try:
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
