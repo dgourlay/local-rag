@@ -82,7 +82,7 @@ class CombinedSummarySuccess(BaseModel):
     summary_128w: str
     key_topics: list[str]
     doc_type_guess: str | None = None
-    sections: list[CombinedSectionSummary]
+    sections: list[CombinedSectionSummary] = []
 
 
 class CombinedSummaryError(BaseModel):

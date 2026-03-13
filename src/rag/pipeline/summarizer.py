@@ -147,8 +147,118 @@ def _format_sections_text(sections: list[tuple[str | None, str]]) -> str:
     return "\n\n".join(parts)
 
 
+def _close_json(fragment: str) -> str:
+    """Close unclosed strings, arrays, and objects in a JSON fragment."""
+    in_string = False
+    escape = False
+    stack: list[str] = []
+    for ch in fragment:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in ("{", "["):
+            stack.append("}" if ch == "{" else "]")
+        elif ch in ("}", "]") and stack:
+            stack.pop()
+
+    if in_string:
+        fragment += '"'
+    for closer in reversed(stack):
+        fragment += closer
+    return fragment
+
+
+def _try_parse_repaired(fragment: str) -> dict[str, object] | None:
+    """Strip trailing comma, close brackets, and try to parse as JSON."""
+    fragment = fragment.rstrip()
+    fragment = fragment.rstrip(",").rstrip()
+    closed = _close_json(fragment)
+    try:
+        result = json.loads(closed)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+def _repair_truncated_json(text: str) -> dict[str, object] | None:
+    """Attempt to repair JSON truncated by LLM output token limits.
+
+    Tries progressively more aggressive truncation strategies:
+    1. Close brackets on the raw fragment (preserves nested partial data)
+    2. Cut back to the last comma at each nesting depth
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    fragment = text[start:]
+
+    # Strategy 1: just close brackets (handles trailing comma after complete value)
+    result = _try_parse_repaired(fragment)
+    if result is not None:
+        logger.info("Repaired truncated JSON (bracket closing)")
+        return result
+
+    # Strategy 2: find comma positions at each depth and try cutting back
+    # from shallowest truncation point outward
+    comma_positions: list[int] = []
+    depth = 0
+    esc = False
+    in_str = False
+    for i, ch in enumerate(fragment):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\" and in_str:
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in ("{", "["):
+            depth += 1
+        elif ch in ("}", "]"):
+            depth -= 1
+        elif ch == ",":
+            comma_positions.append(i)
+
+    # Try cutting back from the last comma positions (most data preserved first)
+    for pos in reversed(comma_positions[-5:]):
+        result = _try_parse_repaired(fragment[:pos])
+        if result is not None:
+            logger.info("Repaired truncated JSON (cut at position %d)", pos)
+            return result
+
+    return None
+
+
+_SECTION_REQUIRED_KEYS = {"section_summary_8w", "section_summary_32w", "section_summary_128w"}
+
+
+def _filter_incomplete_sections(parsed: dict[str, object]) -> None:
+    """Remove incomplete section objects (from truncated JSON) in place."""
+    sections = parsed.get("sections")
+    if isinstance(sections, list):
+        parsed["sections"] = [
+            s for s in sections
+            if isinstance(s, dict) and _SECTION_REQUIRED_KEYS.issubset(s)
+        ]
+
+
 def _extract_json(text: str) -> dict[str, object] | None:
-    """Extract JSON from CLI output, handling markdown fences."""
+    """Extract JSON from CLI output, handling markdown fences and truncation."""
     text = text.strip()
     # Try direct parse
     try:
@@ -186,7 +296,8 @@ def _extract_json(text: str) -> dict[str, object] | None:
                         pass
                     break
 
-    return None
+    # Last resort: try to repair truncated JSON
+    return _repair_truncated_json(text)
 
 
 class CliSummarizer:
@@ -304,6 +415,9 @@ class CliSummarizer:
             return CombinedSummaryError(
                 error=f"Could not parse JSON from CLI output: {stdout[:200]}"
             )
+
+        # Filter out incomplete sections from truncated output
+        _filter_incomplete_sections(parsed)
 
         try:
             return CombinedSummarySuccess.model_validate(parsed)

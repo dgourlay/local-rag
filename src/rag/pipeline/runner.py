@@ -1024,7 +1024,13 @@ class PipelineRunner:
             )
             self._db.upsert_document(updated)
 
-        logger.info("Generated combined summary for %s", file_path)
+        if len(combined.sections) < len(section_pairs):
+            logger.warning(
+                "Combined summary for %s has %d/%d sections (output may have been truncated)",
+                file_path, len(combined.sections), len(section_pairs),
+            )
+        else:
+            logger.info("Generated combined summary for %s", file_path)
 
         # Update section rows with section-level summaries
         section_results: list[tuple[SectionSummarySuccess, SectionRow, int]] = []
