@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from rag.pipeline.parser.base import get_parser
 from rag.pipeline.parser.docling_parser import DoclingParser
@@ -10,24 +10,33 @@ from rag.results import ParseError, ParseSuccess
 from rag.types import FileType
 
 
-def _make_mock_context(
+def _patch_worker(
+    parser: DoclingParser,
     result: dict[str, Any],
     *,
-    alive: bool = False,
-) -> MagicMock:
-    """Build a mock multiprocessing spawn context that returns `result` from queue."""
-    mock_queue = MagicMock()
-    mock_queue.empty.return_value = False
-    mock_queue.get.return_value = result
+    timeout: bool = False,
+    crash: bool = False,
+) -> None:
+    """Replace the parser's worker with a mock pipe that returns `result`.
+
+    If timeout=True, pipe.poll() returns False (simulates timeout).
+    If crash=True, pipe.recv() raises BrokenPipeError.
+    """
+    mock_pipe = MagicMock()
+    if timeout:
+        mock_pipe.poll.return_value = False
+    elif crash:
+        mock_pipe.poll.return_value = True
+        mock_pipe.recv.side_effect = BrokenPipeError("worker died")
+    else:
+        mock_pipe.poll.return_value = True
+        mock_pipe.recv.return_value = result
 
     mock_proc = MagicMock()
-    mock_proc.is_alive.return_value = alive
+    mock_proc.is_alive.return_value = True
 
-    mock_ctx = MagicMock()
-    mock_ctx.Queue.return_value = mock_queue
-    mock_ctx.Process.return_value = mock_proc
-
-    return mock_ctx
+    parser._pipe = mock_pipe
+    parser._worker = mock_proc
 
 
 class TestDoclingParserSupportedTypes:
@@ -53,8 +62,8 @@ class TestDoclingParserFileNotFound:
         assert result.file_path == "/nonexistent/file.pdf"
 
 
-class TestDoclingParserSubprocess:
-    def test_parse_success_via_mock_subprocess(self, tmp_path: Path) -> None:
+class TestDoclingParserWorker:
+    def test_parse_success_via_mock_worker(self, tmp_path: Path) -> None:
         pdf_file = tmp_path / "test.pdf"
         pdf_file.write_bytes(b"%PDF-1.4 fake content")
 
@@ -79,11 +88,9 @@ class TestDoclingParserSubprocess:
             "title": "Test Document",
         }
 
-        mock_ctx = _make_mock_context(mock_result)
-
-        with patch("multiprocessing.get_context", return_value=mock_ctx):
-            parser = DoclingParser()
-            result = parser.parse(str(pdf_file), ocr_enabled=False)
+        parser = DoclingParser()
+        _patch_worker(parser, mock_result)
+        result = parser.parse(str(pdf_file), ocr_enabled=False)
 
         assert isinstance(result, ParseSuccess)
         doc = result.document
@@ -100,20 +107,13 @@ class TestDoclingParserSubprocess:
         assert doc.doc_id  # non-empty UUID
         assert doc.ocr_required is False
 
-    def test_parse_error_from_subprocess(self, tmp_path: Path) -> None:
+    def test_parse_error_from_worker(self, tmp_path: Path) -> None:
         pdf_file = tmp_path / "bad.pdf"
         pdf_file.write_bytes(b"not a real pdf")
 
-        mock_result = {
-            "status": "error",
-            "error": "Docling could not parse the file",
-        }
-
-        mock_ctx = _make_mock_context(mock_result)
-
-        with patch("multiprocessing.get_context", return_value=mock_ctx):
-            parser = DoclingParser()
-            result = parser.parse(str(pdf_file), ocr_enabled=False)
+        parser = DoclingParser()
+        _patch_worker(parser, {"status": "error", "error": "Docling could not parse the file"})
+        result = parser.parse(str(pdf_file), ocr_enabled=False)
 
         assert isinstance(result, ParseError)
         assert "could not parse" in result.error.lower()
@@ -122,49 +122,23 @@ class TestDoclingParserSubprocess:
         pdf_file = tmp_path / "slow.pdf"
         pdf_file.write_bytes(b"%PDF-1.4 content")
 
-        mock_ctx = _make_mock_context({}, alive=True)
-
-        with patch("multiprocessing.get_context", return_value=mock_ctx):
-            parser = DoclingParser()
-            result = parser.parse(str(pdf_file), ocr_enabled=False)
+        parser = DoclingParser()
+        _patch_worker(parser, {}, timeout=True)
+        result = parser.parse(str(pdf_file), ocr_enabled=False)
 
         assert isinstance(result, ParseError)
         assert "timed out" in result.error.lower()
-        mock_ctx.Process.return_value.terminate.assert_called_once()
 
-    def test_subprocess_empty_queue(self, tmp_path: Path) -> None:
-        pdf_file = tmp_path / "empty.pdf"
+    def test_worker_crash_returns_error(self, tmp_path: Path) -> None:
+        pdf_file = tmp_path / "crash.pdf"
         pdf_file.write_bytes(b"%PDF-1.4 content")
 
-        mock_queue = MagicMock()
-        mock_queue.empty.return_value = True
-
-        mock_proc = MagicMock()
-        mock_proc.is_alive.return_value = False
-
-        mock_ctx = MagicMock()
-        mock_ctx.Queue.return_value = mock_queue
-        mock_ctx.Process.return_value = mock_proc
-
-        with patch("multiprocessing.get_context", return_value=mock_ctx):
-            parser = DoclingParser()
-            result = parser.parse(str(pdf_file), ocr_enabled=False)
+        parser = DoclingParser()
+        _patch_worker(parser, {}, crash=True)
+        result = parser.parse(str(pdf_file), ocr_enabled=False)
 
         assert isinstance(result, ParseError)
-        assert "no result" in result.error.lower()
-
-    def test_subprocess_is_called_with_spawn(self, tmp_path: Path) -> None:
-        """Verify that the parser uses spawn context for subprocess isolation."""
-        pdf_file = tmp_path / "test.pdf"
-        pdf_file.write_bytes(b"%PDF-1.4 content")
-
-        mock_ctx = _make_mock_context({"status": "error", "error": "test"})
-
-        with patch("multiprocessing.get_context", return_value=mock_ctx) as mock_get_ctx:
-            parser = DoclingParser()
-            parser.parse(str(pdf_file), ocr_enabled=False)
-
-        mock_get_ctx.assert_called_once_with("spawn")
+        assert "crashed" in result.error.lower()
 
     def test_docling_not_imported_in_parent(self) -> None:
         """Verify that importing DoclingParser does not import docling at module level."""
@@ -178,10 +152,10 @@ class TestDoclingParserSubprocess:
             if line.startswith("import docling") or line.startswith("from docling")
         ]
         assert top_level_imports == [], (
-            "docling should only be imported inside the subprocess function"
+            "docling should only be imported inside the worker function"
         )
 
-    def test_ocr_enabled_passed_to_subprocess(self, tmp_path: Path) -> None:
+    def test_ocr_enabled_sent_to_worker(self, tmp_path: Path) -> None:
         pdf_file = tmp_path / "ocr.pdf"
         pdf_file.write_bytes(b"%PDF-1.4 content")
 
@@ -199,21 +173,17 @@ class TestDoclingParserSubprocess:
             "title": "OCR Doc",
         }
 
-        mock_ctx = _make_mock_context(mock_result)
-
-        with patch("multiprocessing.get_context", return_value=mock_ctx):
-            parser = DoclingParser()
-            result = parser.parse(str(pdf_file), ocr_enabled=True)
+        parser = DoclingParser()
+        _patch_worker(parser, mock_result)
+        result = parser.parse(str(pdf_file), ocr_enabled=True)
 
         assert isinstance(result, ParseSuccess)
         assert result.document.ocr_required is True
 
-        # Verify _parse_in_subprocess was called with ocr_enabled=True
-        call_args = mock_ctx.Process.call_args
-        assert call_args is not None
-        proc_kwargs = call_args[1] if call_args[1] else {}
-        if "args" in proc_kwargs:
-            assert proc_kwargs["args"][1] is True  # ocr_enabled
+        # Verify the pipe.send was called with (file_path, True)
+        parser._pipe.send.assert_called_once()  # type: ignore[union-attr]
+        sent_args = parser._pipe.send.call_args[0][0]  # type: ignore[union-attr]
+        assert sent_args[1] is True  # ocr_enabled
 
 
 class TestDoclingParserDocx:
@@ -235,11 +205,9 @@ class TestDoclingParserDocx:
             "title": "Test DOCX",
         }
 
-        mock_ctx = _make_mock_context(mock_result)
-
-        with patch("multiprocessing.get_context", return_value=mock_ctx):
-            parser = DoclingParser()
-            result = parser.parse(str(docx_file), ocr_enabled=False)
+        parser = DoclingParser()
+        _patch_worker(parser, mock_result)
+        result = parser.parse(str(docx_file), ocr_enabled=False)
 
         assert isinstance(result, ParseSuccess)
         assert result.document.file_type == FileType.DOCX
