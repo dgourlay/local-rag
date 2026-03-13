@@ -66,6 +66,37 @@ SectionSummaryResult = Annotated[
 ]
 
 
+class CombinedSectionSummary(BaseModel):
+    heading: str | None = None
+    section_summary_8w: str
+    section_summary_32w: str
+    section_summary_128w: str
+
+
+class CombinedSummarySuccess(BaseModel):
+    status: Literal["success"] = "success"
+    summary_8w: str
+    summary_16w: str
+    summary_32w: str
+    summary_64w: str
+    summary_128w: str
+    key_topics: list[str]
+    doc_type_guess: str | None = None
+    sections: list[CombinedSectionSummary]
+
+
+class CombinedSummaryError(BaseModel):
+    status: Literal["error"] = "error"
+    error: str
+
+
+CombinedSummaryResult = Annotated[
+    Annotated[CombinedSummarySuccess, Tag("success")]
+    | Annotated[CombinedSummaryError, Tag("error")],
+    Discriminator("status"),
+]
+
+
 class EmbedSuccess(BaseModel):
     status: Literal["success"] = "success"
     vectors: list[list[float]]

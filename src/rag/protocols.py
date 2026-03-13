@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from rag.results import ParseResult, SectionSummaryResult, SummaryResult
+    from rag.results import CombinedSummaryResult, ParseResult, SectionSummaryResult, SummaryResult
     from rag.types import (
         ChunkRow,
         DocumentRow,
@@ -33,6 +33,13 @@ class Summarizer(Protocol):
     def summarize_section(
         self, text: str, heading: str | None, doc_context: str
     ) -> SectionSummaryResult: ...
+    def summarize_combined(
+        self,
+        text: str,
+        title: str | None,
+        file_type: str,
+        sections: list[tuple[str | None, str]],
+    ) -> CombinedSummaryResult: ...
     @property
     def available(self) -> bool: ...
 

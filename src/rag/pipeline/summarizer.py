@@ -9,6 +9,9 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from rag.results import (
+    CombinedSectionSummary,
+    CombinedSummaryError,
+    CombinedSummarySuccess,
     SectionSummaryError,
     SectionSummarySuccess,
     SummaryError,
@@ -17,11 +20,12 @@ from rag.results import (
 
 if TYPE_CHECKING:
     from rag.config import SummarizationConfig
-    from rag.results import SectionSummaryResult, SummaryResult
+    from rag.results import CombinedSummaryResult, SectionSummaryResult, SummaryResult
 
 logger = logging.getLogger(__name__)
 
 MAX_EXCERPT_CHARS = 5000
+_COMBINED_PROMPT_CHAR_LIMIT = 80_000
 
 # Known CLI tool presets: (args, input_mode)
 _CLI_PRESETS: dict[str, tuple[list[str], str]] = {
@@ -80,6 +84,69 @@ Section text:
 """
 
 
+COMBINED_PROMPT_TEMPLATE = """\
+Analyze the following document and its sections. Return a single JSON object with:
+
+Document-level fields:
+- "summary_8w": A short phrase (~8 words) describing the document
+- "summary_16w": A single sentence (~16 words) capturing the main point
+- "summary_32w": 1-2 sentences (~32 words) summarizing the document
+- "summary_64w": A short paragraph (~64 words) covering the key points
+- "summary_128w": A detailed paragraph (~128 words) summarizing the document comprehensively
+- "key_topics": A list of 3-7 key topic strings
+- "doc_type_guess": The document type (e.g. "report", "meeting notes", "readme", "plan")
+- "sections": An array of section summary objects (one per section, in order)
+
+Each section object must have:
+- "heading": The section heading (as given below)
+- "section_summary_8w": A short phrase (~8 words) for this section
+- "section_summary_32w": 1-2 sentences (~32 words) summarizing this section
+- "section_summary_128w": A detailed paragraph (~128 words) covering the section's key points
+
+Each summary level must be independently understandable (not building on the previous level).
+
+Return ONLY the JSON object, no other text.
+
+Title: {title}
+File type: {file_type}
+
+Document excerpt:
+{excerpt}
+
+Sections:
+{sections_text}
+"""
+
+BATCH_SECTION_PROMPT_TEMPLATE = """\
+Summarize the following sections from a document. Return a JSON object with a single field:
+- "sections": An array of section summary objects (one per section, in the same order)
+
+Each section object must have:
+- "heading": The section heading (as given below)
+- "section_summary_8w": A short phrase (~8 words) for this section
+- "section_summary_32w": 1-2 sentences (~32 words) summarizing this section
+- "section_summary_128w": A detailed paragraph (~128 words) covering the section's key points
+
+Each summary level must be independently understandable (not building on the previous level).
+
+Return ONLY the JSON object, no other text.
+
+Document context: {doc_context}
+
+Sections:
+{sections_text}
+"""
+
+
+def _format_sections_text(sections: list[tuple[str | None, str]]) -> str:
+    """Format section (heading, text) pairs into numbered text for prompts."""
+    parts: list[str] = []
+    for i, (heading, text) in enumerate(sections, 1):
+        excerpt = text[:MAX_EXCERPT_CHARS]
+        parts.append(f"--- Section {i}: {heading or 'Untitled section'} ---\n{excerpt}")
+    return "\n\n".join(parts)
+
+
 def _extract_json(text: str) -> dict[str, object] | None:
     """Extract JSON from CLI output, handling markdown fences."""
     text = text.strip()
@@ -101,15 +168,23 @@ def _extract_json(text: str) -> dict[str, object] | None:
         except json.JSONDecodeError:
             pass
 
-    # Try finding first { ... } block
-    brace_match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
-    if brace_match:
-        try:
-            result = json.loads(brace_match.group(0))
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            pass
+    # Try finding outermost { ... } block (handles nested braces)
+    start = text.find("{")
+    if start != -1:
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        result = json.loads(text[start : i + 1])
+                        if isinstance(result, dict):
+                            return result
+                    except json.JSONDecodeError:
+                        pass
+                    break
 
     return None
 
@@ -180,6 +255,152 @@ class CliSummarizer:
             return SectionSummarySuccess.model_validate(parsed)
         except Exception as e:
             return SectionSummaryError(error=f"Validation failed: {e}")
+
+    def summarize_combined(
+        self,
+        text: str,
+        title: str | None,
+        file_type: str,
+        sections: list[tuple[str | None, str]],
+    ) -> CombinedSummaryResult:
+        """Summarize document + all sections in as few LLM calls as possible."""
+        if not self.available:
+            return CombinedSummaryError(error="Summarizer not available")
+
+        excerpt = text[:MAX_EXCERPT_CHARS]
+        sections_text = _format_sections_text(sections)
+        total_chars = len(excerpt) + len(sections_text)
+
+        if total_chars < _COMBINED_PROMPT_CHAR_LIMIT:
+            return self._summarize_combined_single(
+                excerpt, title or "Untitled", file_type, sections_text, len(sections)
+            )
+
+        # Over threshold: split into doc summary + batched sections
+        return self._summarize_combined_split(text, title, file_type, sections)
+
+    def _summarize_combined_single(
+        self,
+        excerpt: str,
+        title: str,
+        file_type: str,
+        sections_text: str,
+        num_sections: int,
+    ) -> CombinedSummaryResult:
+        """Single-call combined summarization."""
+        prompt = COMBINED_PROMPT_TEMPLATE.format(
+            title=title,
+            file_type=file_type,
+            excerpt=excerpt,
+            sections_text=sections_text,
+        )
+
+        stdout = self._run_cli(prompt)
+        if stdout is None:
+            return CombinedSummaryError(error="CLI call failed or timed out")
+
+        parsed = _extract_json(stdout)
+        if parsed is None:
+            return CombinedSummaryError(
+                error=f"Could not parse JSON from CLI output: {stdout[:200]}"
+            )
+
+        try:
+            return CombinedSummarySuccess.model_validate(parsed)
+        except Exception as e:
+            return CombinedSummaryError(error=f"Validation failed: {e}")
+
+    def _summarize_combined_split(
+        self,
+        text: str,
+        title: str | None,
+        file_type: str,
+        sections: list[tuple[str | None, str]],
+    ) -> CombinedSummaryResult:
+        """Split summarization: doc summary first, then batched sections."""
+        doc_result = self.summarize_document(text, title, file_type)
+        if not isinstance(doc_result, SummarySuccess):
+            return CombinedSummaryError(error=f"Document summary failed: {doc_result.error}")
+
+        doc_context = f"{title or 'Untitled'} ({file_type})"
+        section_results = self.summarize_sections_batch(sections, doc_context)
+
+        return CombinedSummarySuccess(
+            summary_8w=doc_result.summary_8w,
+            summary_16w=doc_result.summary_16w,
+            summary_32w=doc_result.summary_32w,
+            summary_64w=doc_result.summary_64w,
+            summary_128w=doc_result.summary_128w,
+            key_topics=doc_result.key_topics,
+            doc_type_guess=doc_result.doc_type_guess,
+            sections=section_results,
+        )
+
+    def summarize_sections_batch(
+        self,
+        sections: list[tuple[str | None, str]],
+        doc_context: str,
+    ) -> list[CombinedSectionSummary]:
+        """Batch sections into groups that fit under the char limit."""
+        if not sections:
+            return []
+
+        batches = self._group_sections_into_batches(sections)
+        all_results: list[CombinedSectionSummary] = []
+
+        for batch in batches:
+            sections_text = _format_sections_text(batch)
+            prompt = BATCH_SECTION_PROMPT_TEMPLATE.format(
+                doc_context=doc_context,
+                sections_text=sections_text,
+            )
+
+            stdout = self._run_cli(prompt)
+            if stdout is None:
+                logger.warning("Batch section summarization CLI call failed")
+                continue
+
+            parsed = _extract_json(stdout)
+            if parsed is None:
+                logger.warning("Could not parse JSON from batch section output")
+                continue
+
+            raw_sections = parsed.get("sections")
+            if not isinstance(raw_sections, list):
+                logger.warning("Batch section output missing 'sections' array")
+                continue
+
+            for raw_sec in raw_sections:
+                if isinstance(raw_sec, dict):
+                    try:
+                        all_results.append(CombinedSectionSummary.model_validate(raw_sec))
+                    except Exception:
+                        logger.warning("Failed to validate section summary in batch")
+
+        return all_results
+
+    def _group_sections_into_batches(
+        self, sections: list[tuple[str | None, str]]
+    ) -> list[list[tuple[str | None, str]]]:
+        """Group sections into batches that fit under the char limit."""
+        batches: list[list[tuple[str | None, str]]] = []
+        current_batch: list[tuple[str | None, str]] = []
+        current_size = 0
+
+        for heading, text in sections:
+            excerpt = text[:MAX_EXCERPT_CHARS]
+            section_size = len(excerpt) + len(heading or "Untitled section") + 50
+            if current_batch and current_size + section_size > _COMBINED_PROMPT_CHAR_LIMIT:
+                batches.append(current_batch)
+                current_batch = []
+                current_size = 0
+            current_batch.append((heading, text))
+            current_size += section_size
+
+        if current_batch:
+            batches.append(current_batch)
+
+        return batches
 
     def _cli_env(self) -> dict[str, str]:
         """Build env for subprocess, stripping vars that prevent nested CLI sessions."""

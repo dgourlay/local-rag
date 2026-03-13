@@ -13,6 +13,9 @@ from rag.pipeline.classifier import classify
 from rag.pipeline.dedup import DedupChecker
 from rag.pipeline.runner import PipelineRunner
 from rag.results import (
+    CombinedSectionSummary,
+    CombinedSummaryError,
+    CombinedSummarySuccess,
     ParseError,
     ParseSuccess,
     SectionSummaryError,
@@ -502,7 +505,7 @@ class TestSummarizationBatchEmbedding:
 
         mock_summarizer = MagicMock()
         mock_summarizer.available = True
-        mock_summarizer.summarize_document.return_value = SummarySuccess(
+        mock_summarizer.summarize_combined.return_value = CombinedSummarySuccess(
             summary_8w="Short",
             summary_16w="Medium summary.",
             summary_32w="A moderate summary of the document.",
@@ -510,11 +513,15 @@ class TestSummarizationBatchEmbedding:
             summary_128w="Long detailed summary of the document.",
             key_topics=["topic1"],
             doc_type_guess="report",
-        )
-        mock_summarizer.summarize_section.return_value = SectionSummarySuccess(
-            section_summary_8w="Short section",
-            section_summary_32w="Section summary text.",
-            section_summary_128w="Detailed section summary text with more context.",
+            sections=[
+                CombinedSectionSummary(
+                    heading=f"Section {i}",
+                    section_summary_8w="Short section",
+                    section_summary_32w="Section summary text.",
+                    section_summary_128w="Detailed section summary text with more context.",
+                )
+                for i in range(num_sections)
+            ],
         )
 
         runner, mocks = _make_runner_with_summarizer(
@@ -568,12 +575,16 @@ class TestSummarizationBatchEmbedding:
         assert mocks["embedder"].embed_batch.call_count == 1
 
     def test_section_failure_does_not_block_others(self, tmp_path: Path) -> None:
-        """If one section summary fails, other sections still produce points."""
+        """If combined fails and one section summary fails in fallback, others still produce points."""
         conn = _create_db()
         num_sections = 3
 
         mock_summarizer = MagicMock()
         mock_summarizer.available = True
+        # Combined fails, triggering fallback
+        mock_summarizer.summarize_combined.return_value = CombinedSummaryError(
+            error="Combined call failed"
+        )
         mock_summarizer.summarize_document.return_value = SummarySuccess(
             summary_8w="Short",
             summary_16w="Medium.",
@@ -614,12 +625,15 @@ class TestSummarizationBatchEmbedding:
         assert len(summary_texts) == 3, f"Expected 3 summary texts, got {len(summary_texts)}"
 
     def test_section_exception_does_not_block_others(self, tmp_path: Path) -> None:
-        """If a section summary raises an exception, other sections still complete."""
+        """If combined fails and a section raises in fallback, other sections still complete."""
         conn = _create_db()
         num_sections = 3
 
         mock_summarizer = MagicMock()
         mock_summarizer.available = True
+        mock_summarizer.summarize_combined.return_value = CombinedSummaryError(
+            error="Combined call failed"
+        )
         mock_summarizer.summarize_document.return_value = SummarySuccess(
             summary_8w="Short",
             summary_16w="Medium.",
@@ -661,13 +675,17 @@ class TestSummarizationBatchEmbedding:
         assert len(summary_texts) == 3
 
     def test_doc_summary_failure_still_embeds_sections(self, tmp_path: Path) -> None:
-        """If document summary fails, section summaries still get embedded."""
+        """If document summary fails, section summaries still get embedded via fallback."""
         conn = _create_db()
         num_sections = 2
         from rag.results import SummaryError
 
         mock_summarizer = MagicMock()
         mock_summarizer.available = True
+        # Combined fails, fallback doc summary also fails, but sections succeed
+        mock_summarizer.summarize_combined.return_value = CombinedSummaryError(
+            error="combined failed"
+        )
         mock_summarizer.summarize_document.return_value = SummaryError(error="timeout")
         mock_summarizer.summarize_section.return_value = SectionSummarySuccess(
             section_summary_8w="Short",
@@ -688,13 +706,13 @@ class TestSummarizationBatchEmbedding:
         assert len(summary_texts) == num_sections
 
     def test_parallel_produces_same_results(self, tmp_path: Path) -> None:
-        """Parallel summarization should produce same vector points as would sequential."""
+        """Combined summarization should produce correct vector points."""
         conn = _create_db()
         num_sections = 4
 
         mock_summarizer = MagicMock()
         mock_summarizer.available = True
-        mock_summarizer.summarize_document.return_value = SummarySuccess(
+        mock_summarizer.summarize_combined.return_value = CombinedSummarySuccess(
             summary_8w="Short",
             summary_16w="Medium.",
             summary_32w="Moderate doc summary.",
@@ -702,18 +720,16 @@ class TestSummarizationBatchEmbedding:
             summary_128w="Long doc summary.",
             key_topics=["t1"],
             doc_type_guess="report",
+            sections=[
+                CombinedSectionSummary(
+                    heading=f"Section {i}",
+                    section_summary_8w=f"Short Section {i}",
+                    section_summary_32w=f"Summary of Section {i}",
+                    section_summary_128w=f"Detailed summary of Section {i}",
+                )
+                for i in range(num_sections)
+            ],
         )
-
-        def section_side_effect(
-            text: str, heading: str | None, doc_context: str,
-        ) -> SectionSummarySuccess | SectionSummaryError:
-            return SectionSummarySuccess(
-                section_summary_8w=f"Short {heading}",
-                section_summary_32w=f"Summary of {heading}",
-                section_summary_128w=f"Detailed summary of {heading}",
-            )
-
-        mock_summarizer.summarize_section.side_effect = section_side_effect
 
         runner, mocks = _make_runner_with_summarizer(
             tmp_path, conn, summarizer=mock_summarizer, num_sections=num_sections

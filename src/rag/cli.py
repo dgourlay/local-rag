@@ -386,6 +386,7 @@ class _ProgressDisplay:
     def __init__(self, total: int) -> None:
         self._total = total
         self._idx_w = len(str(total))
+        self._start_times: dict[int, float] = {}
 
     def _fit_name(self, name: str) -> str:
         """Truncate or pad name to exactly _NAME_W characters."""
@@ -393,13 +394,27 @@ class _ProgressDisplay:
             return name[: self._NAME_W - 1] + "…"
         return name.ljust(self._NAME_W)
 
+    def _format_elapsed(self, file_idx: int) -> str:
+        """Return formatted elapsed time string like ' [12.3s]' or ' [1m 23.4s]'."""
+        start = self._start_times.get(file_idx)
+        if start is None:
+            return ""
+        elapsed = time.monotonic() - start
+        if elapsed >= 60.0:
+            minutes = int(elapsed // 60)
+            seconds = elapsed % 60
+            return f" [{minutes}m {seconds:.1f}s]"
+        return f" [{elapsed:.1f}s]"
+
     def on_start(self, file_idx: int, _total: int, name: str) -> None:
+        self._start_times[file_idx] = time.monotonic()
         idx = f"[{file_idx:>{self._idx_w}}/{self._total}]"
         click.echo(f"  {idx} {self._fit_name(name)}  parsing...")
 
     def on_status(self, file_idx: int, _total: int, name: str, status: str) -> None:
         idx = f"[{file_idx:>{self._idx_w}}/{self._total}]"
-        click.echo(f"  {idx} {self._fit_name(name)}  {status}")
+        elapsed = self._format_elapsed(file_idx)
+        click.echo(f"  {idx} {self._fit_name(name)}  {status}{elapsed}")
 
     def on_done(
         self,
@@ -413,7 +428,9 @@ class _ProgressDisplay:
         label_info = self._OUTCOME_LABELS.get(label_name, (label_name.lower(), "white"))
         styled = click.style(label_info[0], fg=label_info[1])
         idx = f"[{file_idx:>{self._idx_w}}/{self._total}]"
-        click.echo(f"  {idx} {self._fit_name(name)}  {styled} ({detail})")
+        elapsed = self._format_elapsed(file_idx)
+        click.echo(f"  {idx} {self._fit_name(name)}  {styled} ({detail}){elapsed}")
+        self._start_times.pop(file_idx, None)
 
     def finalize(self) -> None:
         """No-op — kept for interface compatibility."""

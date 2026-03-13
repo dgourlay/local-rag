@@ -16,7 +16,12 @@ from rag.pipeline.chunker import chunk_document
 from rag.pipeline.classifier import classify
 from rag.pipeline.normalizer import normalize
 from rag.pipeline.parser.base import get_parser
-from rag.results import ParseSuccess, SectionSummarySuccess, SummarySuccess
+from rag.results import (
+    CombinedSummarySuccess,
+    ParseSuccess,
+    SectionSummarySuccess,
+    SummarySuccess,
+)
 from rag.types import (
     NAMESPACE_RAG,
     Chunk,
@@ -882,7 +887,7 @@ class PipelineRunner:
         # Summarize (if enabled)
         if on_status and self._summarizer and self._summarizer.available:
             section_count = len([s for s in pr.normalized.sections if s.text.strip()])
-            on_status(pr.file_index, 0, Path(file_path).name, f"summarizing ({section_count} sections)...")
+            on_status(pr.file_index, 0, Path(file_path).name, f"summarizing (1 combined call, {section_count} sections)...")
 
         summary_points = self._summarize_document(
             doc_id=doc_id,
@@ -956,8 +961,116 @@ class PipelineRunner:
 
         full_text = "\n\n".join(s.text for s in normalized.sections)
 
-        # --- Phase 1: Document-level summary (sequential, provides context) ---
-        doc_result = self._summarizer.summarize_document(
+        # Build list of (section, section_row) pairs to summarize
+        section_pairs = [
+            (section, section_row)
+            for section, section_row in zip(normalized.sections, section_rows, strict=False)
+            if section.text.strip()
+        ]
+
+        # --- Try combined summarization first ---
+        sections_for_combined: list[tuple[str | None, str]] = [
+            (section.heading, section.text) for section, _row in section_pairs
+        ]
+
+        combined_result = self._summarizer.summarize_combined(
+            full_text, title, normalized.file_type.value, sections_for_combined
+        )
+
+        if isinstance(combined_result, CombinedSummarySuccess):
+            return self._process_combined_result(
+                combined_result, doc_id, title, file_path, folder_path,
+                folder_ancestors, file_type, modified_at, normalized,
+                section_pairs,
+            )
+
+        # --- Fallback: separate doc + parallel section calls ---
+        logger.warning(
+            "Combined summarization failed for %s: %s, falling back to separate calls",
+            file_path,
+            combined_result.error,
+        )
+        return self._summarize_document_fallback(
+            doc_id, title, file_path, folder_path, folder_ancestors,
+            file_type, modified_at, normalized, section_pairs,
+        )
+
+    def _process_combined_result(
+        self,
+        combined: CombinedSummarySuccess,
+        doc_id: str,
+        title: str,
+        file_path: str,
+        folder_path: str,
+        folder_ancestors: list[str],
+        file_type: FileType,
+        modified_at: str,
+        normalized: NormalizedDocument,
+        section_pairs: list[tuple[object, SectionRow]],
+    ) -> list[VectorPoint]:
+        """Process a successful combined summarization result into vector points."""
+        # Update document row with doc-level summaries
+        existing_doc = self._db.get_document(doc_id)
+        if existing_doc is not None:
+            updated = existing_doc.model_copy(
+                update={
+                    "summary_8w": combined.summary_8w,
+                    "summary_16w": combined.summary_16w,
+                    "summary_32w": combined.summary_32w,
+                    "summary_64w": combined.summary_64w,
+                    "summary_128w": combined.summary_128w,
+                    "key_topics": combined.key_topics,
+                    "doc_type_guess": combined.doc_type_guess,
+                    "summary_content_hash": normalized.normalized_content_hash,
+                }
+            )
+            self._db.upsert_document(updated)
+
+        logger.info("Generated combined summary for %s", file_path)
+
+        # Update section rows with section-level summaries
+        section_results: list[tuple[SectionSummarySuccess, SectionRow, int]] = []
+        for i, (section, section_row) in enumerate(section_pairs):
+            if i < len(combined.sections):
+                sec = combined.sections[i]
+                sec_success = SectionSummarySuccess(
+                    section_summary_8w=sec.section_summary_8w,
+                    section_summary_32w=sec.section_summary_32w,
+                    section_summary_128w=sec.section_summary_128w,
+                )
+                updated_section = section_row.model_copy(
+                    update={
+                        "section_summary_8w": sec.section_summary_8w,
+                        "section_summary_32w": sec.section_summary_32w,
+                        "section_summary_128w": sec.section_summary_128w,
+                        "embedding_model_version": self._embedder.model_version,
+                    }
+                )
+                self._db.insert_sections([updated_section])
+                section_results.append((sec_success, section_row, i))
+
+        return self._build_summary_points(
+            doc_id, title, file_path, folder_path, folder_ancestors,
+            file_type, modified_at, combined.summary_128w,
+            combined.doc_type_guess, combined.key_topics, section_results,
+        )
+
+    def _summarize_document_fallback(
+        self,
+        doc_id: str,
+        title: str,
+        file_path: str,
+        folder_path: str,
+        folder_ancestors: list[str],
+        file_type: FileType,
+        modified_at: str,
+        normalized: NormalizedDocument,
+        section_pairs: list[tuple[object, SectionRow]],
+    ) -> list[VectorPoint]:
+        """Fallback: separate doc summary + parallel section summaries."""
+        full_text = "\n\n".join(s.text for s in normalized.sections)
+
+        doc_result = self._summarizer.summarize_document(  # type: ignore[union-attr]
             full_text, title, normalized.file_type.value
         )
 
@@ -988,22 +1101,13 @@ class PipelineRunner:
         else:
             logger.warning("Document summarization failed for %s: %s", file_path, doc_result.error)
 
-        # --- Phase 2: Section-level summaries (parallel via ThreadPoolExecutor) ---
+        # Parallel section summaries
         doc_context = f"{title} ({normalized.file_type.value})"
-
-        # Build list of (section, section_row) pairs to summarize
-        section_pairs = [
-            (section, section_row)
-            for section, section_row in zip(normalized.sections, section_rows, strict=False)
-            if section.text.strip()
-        ]
-
-        # Submit all section summaries in parallel
         section_results: list[tuple[SectionSummarySuccess, SectionRow, int]] = []
         max_workers = self._config.summarization.max_workers
 
         def _summarize_one_section(
-            section_text: str, heading: str | None, context: str
+            section_text: str, heading: str | None, context: str,
         ) -> SectionSummarySuccess | None:
             result = self._summarizer.summarize_section(section_text, heading, context)  # type: ignore[union-attr]
             if isinstance(result, SectionSummarySuccess):
@@ -1013,7 +1117,7 @@ class PipelineRunner:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_idx = {
                 executor.submit(
-                    _summarize_one_section, section.text, section.heading, doc_context
+                    _summarize_one_section, section.text, section.heading, doc_context,  # type: ignore[union-attr]
                 ): i
                 for i, (section, _section_row) in enumerate(section_pairs)
             }
@@ -1026,12 +1130,11 @@ class PipelineRunner:
                     logger.exception(
                         "Section summarization raised for %s section %d",
                         file_path,
-                        section.order,
+                        idx,
                     )
                     continue
 
                 if sec_result is not None:
-                    # Update section row with summary
                     updated_section = section_row.model_copy(
                         update={
                             "section_summary_8w": sec_result.section_summary_8w,
@@ -1041,20 +1144,29 @@ class PipelineRunner:
                         }
                     )
                     self._db.insert_sections([updated_section])
-                    section_results.append((sec_result, section_row, section.order))
-                    logger.info(
-                        "Generated section summary for %s section %d",
-                        file_path,
-                        section.order,
-                    )
-                else:
-                    logger.warning(
-                        "Section summarization failed for %s section %d",
-                        file_path,
-                        section.order,
-                    )
+                    section_results.append((sec_result, section_row, idx))
 
-        # --- Phase 3: Batch-embed ALL summary texts in one call ---
+        return self._build_summary_points(
+            doc_id, title, file_path, folder_path, folder_ancestors,
+            file_type, modified_at, doc_summary_text, doc_type_guess,
+            doc_key_topics, section_results,
+        )
+
+    def _build_summary_points(
+        self,
+        doc_id: str,
+        title: str,
+        file_path: str,
+        folder_path: str,
+        folder_ancestors: list[str],
+        file_type: FileType,
+        modified_at: str,
+        doc_summary_text: str | None,
+        doc_type_guess: str | None,
+        doc_key_topics: list[str] | None,
+        section_results: list[tuple[SectionSummarySuccess, SectionRow, int]],
+    ) -> list[VectorPoint]:
+        """Batch-embed all summaries and build VectorPoints."""
         embed_entries: list[dict[str, object]] = []
 
         if doc_summary_text is not None:
@@ -1064,7 +1176,6 @@ class PipelineRunner:
                 "doc_type_guess": doc_type_guess,
             })
 
-        # Sort section results by order for deterministic embedding order
         section_results.sort(key=lambda t: t[2])
         for sec_result, section_row, order in section_results:
             embed_entries.append({
@@ -1081,7 +1192,6 @@ class PipelineRunner:
         all_texts = [str(entry["text"]) for entry in embed_entries]
         all_vectors = self._embedder.embed_batch(all_texts)
 
-        # --- Phase 4: Build VectorPoints from zipped results ---
         summary_points: list[VectorPoint] = []
         for entry, vector in zip(embed_entries, all_vectors, strict=True):
             if entry["type"] == "document":
