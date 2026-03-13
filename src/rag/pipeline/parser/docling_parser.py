@@ -32,6 +32,7 @@ def _worker_loop(
     import warnings
 
     warnings.filterwarnings("ignore", message=".*DrawingML.*")
+    logging.getLogger("docling.backend.msword_backend").setLevel(logging.ERROR)
 
     try:
         from docling.datamodel.base_models import InputFormat
