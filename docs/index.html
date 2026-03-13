@@ -474,6 +474,30 @@ window.__App = function App() {
           </p>
         </div>
 
+        {/* Intro blurb */}
+        <div
+          style={{
+            background: `linear-gradient(135deg, ${C.surface} 0%, ${C.accentDim} 100%)`,
+            border: `1px solid ${C.border}`,
+            borderRadius: 10,
+            padding: "18px 22px",
+            marginBottom: 22,
+            lineHeight: 1.65,
+          }}
+        >
+          <p style={{ color: C.text, fontSize: 14, margin: 0 }}>
+            Not every document you work with belongs in a shared knowledge base.
+            Not to mention they're scattered across folders you'll never organize,
+            and without search you're left feeding files to AI tools one at a time.
+            Local RAG indexes your local folders and gives{" "}
+            <span style={{ color: C.accent, fontWeight: 500 }}>Claude Code</span>,{" "}
+            <span style={{ color: C.accent, fontWeight: 500 }}>Kiro</span>, and{" "}
+            <span style={{ color: C.accent, fontWeight: 500 }}>Codex</span>{" "}
+            semantic search over everything, automatically.
+            Fully local. Your documents never leave your machine.
+          </p>
+        </div>
+
         {/* Tab bar */}
         <div
           style={{
