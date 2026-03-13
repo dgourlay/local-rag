@@ -43,7 +43,7 @@ class SentenceTransformerEmbedder:
             if self._config.fp16:
                 import torch
 
-                model_kwargs["torch_dtype"] = torch.float16
+                model_kwargs["dtype"] = torch.float16
             self._model = SentenceTransformer(
                 self._config.model,
                 cache_folder=str(self._config.cache_dir),

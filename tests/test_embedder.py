@@ -161,7 +161,7 @@ class TestFP16Config:
         config = EmbeddingConfig(cache_dir=Path("/tmp/test-models"), fp16=False)
         assert config.fp16 is False
 
-    def test_fp16_passes_torch_dtype_to_model(self) -> None:
+    def test_fp16_passes_dtype_to_model(self) -> None:
         import torch
 
         config = EmbeddingConfig(
@@ -178,7 +178,7 @@ class TestFP16Config:
 
         mock_cls.assert_called_once()
         call_kwargs = mock_cls.call_args[1]
-        assert call_kwargs["model_kwargs"]["torch_dtype"] == torch.float16
+        assert call_kwargs["model_kwargs"]["dtype"] == torch.float16
 
     def test_fp16_disabled_no_model_kwargs(self) -> None:
         config = EmbeddingConfig(
