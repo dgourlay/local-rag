@@ -474,30 +474,6 @@ window.__App = function App() {
           </p>
         </div>
 
-        {/* Intro blurb */}
-        <div
-          style={{
-            background: `linear-gradient(135deg, ${C.surface} 0%, ${C.accentDim} 100%)`,
-            border: `1px solid ${C.border}`,
-            borderRadius: 10,
-            padding: "18px 22px",
-            marginBottom: 22,
-            lineHeight: 1.65,
-          }}
-        >
-          <p style={{ color: C.text, fontSize: 14, margin: 0 }}>
-            Not every document you work with belongs in a shared knowledge base.
-            Not to mention they're scattered across folders you'll never organize,
-            and without search you're left feeding files to AI tools one at a time.
-            Local RAG indexes your local folders and gives{" "}
-            <span style={{ color: C.accent, fontWeight: 500 }}>Claude Code</span>,{" "}
-            <span style={{ color: C.accent, fontWeight: 500 }}>Kiro</span>, and{" "}
-            <span style={{ color: C.accent, fontWeight: 500 }}>Codex</span>{" "}
-            semantic search over everything, automatically.
-            Fully local. Summarization uses your approved LLM CLI, everything else stays on your machine.
-          </p>
-        </div>
-
         {/* Tab bar */}
         <div
           style={{
@@ -538,63 +514,6 @@ window.__App = function App() {
         {/* Overview tab */}
         {tab === "overview" && (
           <div>
-            {/* Hero */}
-            <div
-              style={{
-                background: `linear-gradient(135deg, ${C.accentDim}, ${C.surface})`,
-                border: `1px solid ${C.borderActive}`,
-                borderRadius: 12,
-                padding: "28px 28px 24px",
-                marginBottom: 16,
-              }}
-            >
-              <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 6 }}>
-                Your documents, searchable by AI — entirely local.
-              </div>
-              <div style={{ color: C.muted, fontSize: 13, lineHeight: 1.6, maxWidth: 720 }}>
-                local-rag indexes your local documents (PDF, DOCX, TXT, MD), builds a
-                hybrid search index with dense vectors and keyword search, and exposes
-                retrieval as MCP tools — so Claude Desktop, Claude Code, and Kiro can
-                search your files as naturally as browsing the web. No cloud. No API keys
-                for core search. Everything runs on your machine.
-              </div>
-              <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-                <a
-                  href="https://github.com/dgourlay/local-rag"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    background: C.accent,
-                    color: "#fff",
-                    padding: "8px 18px",
-                    borderRadius: 6,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    textDecoration: "none",
-                    fontFamily: mono,
-                  }}
-                >
-                  GitHub Repository
-                </a>
-                <span
-                  onClick={() => setTab("cli")}
-                  style={{
-                    background: C.surface,
-                    color: C.accent,
-                    border: `1px solid ${C.borderActive}`,
-                    padding: "8px 18px",
-                    borderRadius: 6,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    fontFamily: mono,
-                  }}
-                >
-                  CLI Reference →
-                </span>
-              </div>
-            </div>
-
             {/* Quick start */}
             <div
               style={{
@@ -637,6 +556,97 @@ source .venv/bin/activate
 rag init                # interactive wizard: pick folders, detect LLM CLI
 rag index               # scans, parses, chunks, embeds (models download on first run)
 rag search "your query" # test it from the terminal`}
+              </div>
+            </div>
+
+            {/* Why I Built This */}
+            <div
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                padding: "20px 22px",
+                marginBottom: 16,
+              }}
+            >
+              <div
+                style={{
+                  color: C.amber,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 10,
+                }}
+              >
+                Why I Built This
+              </div>
+              <p style={{ color: C.text, fontSize: 14, lineHeight: 1.65, margin: 0 }}>
+                Not every document you work with belongs in a shared knowledge base.
+                Not to mention they're scattered across folders you'll never organize,
+                and without search you're left feeding files to AI tools one at a time.
+                Local RAG indexes your local folders and gives{" "}
+                <span style={{ color: C.accent, fontWeight: 500 }}>Claude Code</span>,{" "}
+                <span style={{ color: C.accent, fontWeight: 500 }}>Kiro</span>, and{" "}
+                <span style={{ color: C.accent, fontWeight: 500 }}>Codex</span>{" "}
+                semantic search over everything, automatically.
+                Fully local. Summarization uses your approved LLM CLI, everything else stays on your machine.
+              </p>
+            </div>
+
+            {/* Your documents, searchable by AI */}
+            <div
+              style={{
+                background: `linear-gradient(135deg, ${C.accentDim}, ${C.surface})`,
+                border: `1px solid ${C.borderActive}`,
+                borderRadius: 12,
+                padding: "28px 28px 24px",
+                marginBottom: 16,
+              }}
+            >
+              <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 6 }}>
+                Your documents, searchable by AI.
+              </div>
+              <div style={{ color: C.muted, fontSize: 13, lineHeight: 1.6, maxWidth: 720 }}>
+                local-rag indexes your local documents (PDF, DOCX, TXT, MD), builds a
+                hybrid search index with dense vectors and keyword search, and exposes
+                retrieval as MCP tools — so Claude Code, Kiro, and Codex can
+                search your files as naturally as browsing the web.
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+                <a
+                  href="https://github.com/dgourlay/local-rag"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    background: C.accent,
+                    color: "#fff",
+                    padding: "8px 18px",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    textDecoration: "none",
+                    fontFamily: mono,
+                  }}
+                >
+                  GitHub Repository
+                </a>
+                <span
+                  onClick={() => setTab("cli")}
+                  style={{
+                    background: C.surface,
+                    color: C.accent,
+                    border: `1px solid ${C.borderActive}`,
+                    padding: "8px 18px",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontFamily: mono,
+                  }}
+                >
+                  CLI Reference →
+                </span>
               </div>
             </div>
 
