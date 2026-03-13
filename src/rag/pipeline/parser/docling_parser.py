@@ -17,7 +17,7 @@ ParseError.model_rebuild()
 
 logger = logging.getLogger(__name__)
 
-_PARSE_TIMEOUT_SECONDS = 300
+_PARSE_TIMEOUT_SECONDS = 360
 
 
 def _worker_loop(
