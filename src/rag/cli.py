@@ -376,7 +376,7 @@ class _ProgressDisplay:
     """
 
     _WINDOW = 10
-    _NAME_W = 40
+    _NAME_W = 55
     _STATUS_W = 30
 
     _OUTCOME_LABELS: dict[str, tuple[str, str]] = {
