@@ -399,18 +399,17 @@ class _ProgressDisplay:
         self._completed = 0
         self._po = _PO
 
-    def _trunc(self, name: str) -> str:
+    def _fit_name(self, name: str) -> str:
+        """Truncate or pad name to exactly _NAME_W characters."""
         if len(name) > self._NAME_W:
             return name[: self._NAME_W - 1] + "…"
-        return name
+        return name.ljust(self._NAME_W)
 
     def _render_row(self, file_idx: int, name: str, result: str | None) -> str:
         idx = f"[{file_idx:>{self._idx_w}}/{self._total}]"
-        left = f"{idx} {self._trunc(name)}"
-        left = left.ljust(self._idx_w + 2 + self._NAME_W + 3)
         if result is not None:
-            return f"  {left} → {result}"
-        return f"  {left}   parsing..."
+            return f"  {idx} {self._fit_name(name)}  → {result}"
+        return f"  {idx} {self._fit_name(name)}  parsing..."
 
     def _redraw(self) -> None:
         """Redraw the rolling window in place."""
