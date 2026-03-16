@@ -621,17 +621,27 @@ window.__App = function App() {
                   background: C.bg,
                   padding: 14,
                   borderRadius: 6,
-                  whiteSpace: "pre", overflowX: "auto",
                   overflowX: "auto",
                 }}
               >
-{`git clone https://github.com/dgourlay/local-rag.git
-cd local-rag
-make setup              # creates venv, installs deps, starts Qdrant
-source .venv/bin/activate
-rag init                # interactive wizard: pick folders, detect LLM CLI
-rag index               # scans, parses, chunks, embeds (models download on first run)
-rag search "your query" # test it from the terminal`}
+                {[
+                  { cmd: "git clone https://github.com/dgourlay/local-rag.git" },
+                  { cmd: "cd local-rag" },
+                  { cmd: "make setup", comment: "creates venv, installs deps, starts Qdrant" },
+                  { cmd: "source .venv/bin/activate" },
+                  { cmd: "rag init", comment: "interactive wizard: pick folders, detect LLM CLI" },
+                  { cmd: "rag index", comment: "scans, parses, chunks, embeds (models download on first run)" },
+                  { cmd: 'rag search "your query"', comment: "test it from the terminal" },
+                ].map((line, i) => (
+                  <div key={i} style={{ whiteSpace: "pre" }}>
+                    <span>{line.cmd}</span>
+                    {line.comment && (
+                      <span style={{ color: "#4a5568", userSelect: "none", WebkitUserSelect: "none" }}>
+                        {"  # " + line.comment}
+                      </span>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
 
