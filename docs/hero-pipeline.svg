@@ -1,0 +1,325 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 490" width="1100" height="490">
+  <defs>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="panelShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="8" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+    <radialGradient id="vectorField" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#a855f7" stop-opacity="0.15"/>
+      <stop offset="60%" stop-color="#3b82f6" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="hitGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#22c55e" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#22c55e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1100" y2="490" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0c1222"/>
+      <stop offset="50%" stop-color="#0a0f1a"/>
+      <stop offset="100%" stop-color="#080d16"/>
+    </linearGradient>
+    <linearGradient id="flowRight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.7"/>
+      <stop offset="60%" stop-color="#a855f7" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M 28 0 L 0 0 0 28" fill="none" stroke="#1e3a5f" stroke-width="0.3" opacity="0.15"/>
+    </pattern>
+    <style>
+      @keyframes pulse { 0%,100% { opacity: 0.2; } 50% { opacity: 1; } }
+      @keyframes glow-ring { 0%,100% { opacity: 0.08; } 50% { opacity: 0.35; } }
+      .p1 { animation: pulse 3s ease-in-out infinite; }
+      .p2 { animation: pulse 3s ease-in-out 1s infinite; }
+      .p3 { animation: pulse 3s ease-in-out 2s infinite; }
+      .hit { animation: glow-ring 2.5s ease-in-out infinite; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="490" fill="url(#bgGrad)" rx="12"/>
+  <rect width="1100" height="490" fill="url(#grid)" rx="12" opacity="0.5"/>
+
+  <!-- ================================================================ -->
+  <!-- LEFT: Your local documents                                       -->
+  <!-- ================================================================ -->
+
+  <text x="32" y="34" font-family="'JetBrains Mono', monospace" font-size="12" fill="#64748b" opacity="0.7" letter-spacing="0.5">~/Documents/</text>
+
+  <!-- Doc 1: Q3 ops review -->
+  <g transform="translate(28, 50)" filter="url(#panelShadow)">
+    <rect width="210" height="78" rx="6" fill="#111827" stroke="#334155" stroke-width="0.8"/>
+    <rect x="10" y="10" width="7" height="7" rx="1.5" fill="#ef4444" opacity="0.7"/>
+    <text x="24" y="17" font-family="'JetBrains Mono', monospace" font-size="10" fill="#e2e8f0" opacity="0.9">q3-ops-review.pdf</text>
+    <text x="10" y="34" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.8">Throughput increased 14% after the</text>
+    <text x="10" y="47" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.8">shift scheduling changes in August...</text>
+    <text x="10" y="62" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.7">Gate rejection rate dropped from 8.2%</text>
+    <text x="10" y="73" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.6">to 3.1% following the new SOP rollout.</text>
+  </g>
+
+  <!-- Doc 2: migration plan -->
+  <g transform="translate(28, 138)" filter="url(#panelShadow)">
+    <rect width="210" height="78" rx="6" fill="#111827" stroke="#22c55e" stroke-width="0.6" opacity="0.9"/>
+    <rect x="10" y="10" width="7" height="7" rx="1.5" fill="#22c55e" opacity="0.7"/>
+    <text x="24" y="17" font-family="'JetBrains Mono', monospace" font-size="10" fill="#e2e8f0" opacity="0.9">migration-plan.md</text>
+    <text x="10" y="34" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.8"># Database Migration Strategy</text>
+    <text x="10" y="47" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.8">We decided to run dual-write for 30</text>
+    <text x="10" y="62" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.7">days before cutover. Rollback plan:</text>
+    <text x="10" y="73" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.6">restore from the hourly snapshots...</text>
+  </g>
+
+  <!-- Doc 3: team handbook -->
+  <g transform="translate(28, 226)" filter="url(#panelShadow)">
+    <rect width="210" height="78" rx="6" fill="#111827" stroke="#334155" stroke-width="0.8"/>
+    <rect x="10" y="10" width="7" height="7" rx="1.5" fill="#3b82f6" opacity="0.7"/>
+    <text x="24" y="17" font-family="'JetBrains Mono', monospace" font-size="10" fill="#e2e8f0" opacity="0.9">team-handbook.docx</text>
+    <text x="10" y="34" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.8">On-call rotation follows a 2-week</text>
+    <text x="10" y="47" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.8">cycle. Escalation path: on-call lead</text>
+    <text x="10" y="62" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.7">then engineering manager, then VP</text>
+    <text x="10" y="73" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b" opacity="0.6">of engineering for SEV-1 incidents...</text>
+  </g>
+
+  <!-- Faint 4th doc peeking -->
+  <g transform="translate(28, 314)" opacity="0.45">
+    <rect width="210" height="38" rx="6" fill="#111827" stroke="#334155" stroke-width="0.5"/>
+    <rect x="10" y="10" width="7" height="7" rx="1.5" fill="#f59e0b" opacity="0.5"/>
+    <text x="24" y="17" font-family="'JetBrains Mono', monospace" font-size="10" fill="#e2e8f0" opacity="0.7">vendor-contract-2024.pdf</text>
+    <text x="10" y="32" font-family="'IBM Plex Sans', sans-serif" font-size="9" fill="#64748b">SLA guarantees 99.95% uptime...</text>
+  </g>
+
+  <text x="133" y="378" font-family="'JetBrains Mono', monospace" font-size="10" fill="#94a3b8" text-anchor="middle" letter-spacing="1.5" font-weight="600" opacity="0.5">YOUR FILES</text>
+
+
+  <!-- ================================================================ -->
+  <!-- FLOW: Left to Center                                             -->
+  <!-- ================================================================ -->
+  <g filter="url(#glow)">
+    <path d="M 238,89 C 250,89 258,140 270,155" stroke="#ef4444" stroke-width="1" fill="none" opacity="0.25"/>
+    <path d="M 238,177 C 250,177 258,195 270,210" stroke="#22c55e" stroke-width="1.2" fill="none" opacity="0.4"/>
+    <path d="M 238,265 C 250,265 258,250 270,245" stroke="#3b82f6" stroke-width="1" fill="none" opacity="0.25"/>
+  </g>
+  <circle r="2.5" fill="#ef4444" class="p1" opacity="0.6">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M 238,89 C 250,89 258,140 270,155" keyTimes="0;1" calcMode="spline" keySplines="0.4 0 0.2 1"/>
+  </circle>
+  <circle r="3" fill="#22c55e" class="p2" opacity="0.8">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M 238,177 C 250,177 258,195 270,210" begin="0.5s" keyTimes="0;1" calcMode="spline" keySplines="0.4 0 0.2 1"/>
+  </circle>
+  <circle r="2.5" fill="#3b82f6" class="p3" opacity="0.6">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M 238,265 C 250,265 258,250 270,245" begin="1s" keyTimes="0;1" calcMode="spline" keySplines="0.4 0 0.2 1"/>
+  </circle>
+
+
+  <!-- ================================================================ -->
+  <!-- CENTER: local-rag engine                                         -->
+  <!-- ================================================================ -->
+  <g transform="translate(270, 24)" filter="url(#panelShadow)">
+    <rect width="300" height="442" rx="8" fill="#0d1220" stroke="#1e3a5f" stroke-width="1"/>
+
+    <!-- Header -->
+    <rect width="300" height="36" rx="8" fill="#111827"/>
+    <rect y="28" width="300" height="8" fill="#111827"/>
+    <text x="150" y="24" font-family="'JetBrains Mono', monospace" font-size="14" fill="#3b82f6" text-anchor="middle" font-weight="700" letter-spacing="0.5">local-rag</text>
+
+    <!-- Privacy badge -->
+    <g transform="translate(46, 46)">
+      <rect width="208" height="24" rx="12" fill="#22c55e" opacity="0.1" stroke="#22c55e" stroke-width="0.7"/>
+      <g transform="translate(10, 3.5)">
+        <rect x="1" y="7" width="12" height="9" rx="2" fill="none" stroke="#22c55e" stroke-width="0.9"/>
+        <path d="M3.5,7 L3.5,5 Q3.5,1 7,1 Q10.5,1 10.5,5 L10.5,7" fill="none" stroke="#22c55e" stroke-width="0.9"/>
+        <circle cx="7" cy="12" r="1.4" fill="#22c55e" opacity="0.8"/>
+      </g>
+      <text x="30" y="16" font-family="'JetBrains Mono', monospace" font-size="9" fill="#22c55e" opacity="0.9" font-weight="600">runs entirely on your machine</text>
+    </g>
+
+    <!-- Index stats -->
+    <text x="18" y="92" font-family="'JetBrains Mono', monospace" font-size="9" fill="#94a3b8" opacity="0.7">42 docs  |  847 chunks  |  hybrid index</text>
+
+    <!-- Vector space visualization -->
+    <g transform="translate(22, 104)">
+      <ellipse cx="128" cy="85" rx="118" ry="80" fill="url(#vectorField)"/>
+
+      <!-- Hit glow on green cluster -->
+      <ellipse cx="125" cy="82" rx="32" ry="28" fill="url(#hitGlow)" class="hit"/>
+
+      <g filter="url(#glow)">
+        <!-- q3-ops red cluster -->
+        <circle cx="48" cy="38" r="4" fill="#ef4444" opacity="0.6"/>
+        <circle cx="67" cy="29" r="3" fill="#ef4444" opacity="0.5"/>
+        <circle cx="41" cy="52" r="2.5" fill="#ef4444" opacity="0.45"/>
+        <circle cx="63" cy="48" r="3.2" fill="#ef4444" opacity="0.55"/>
+        <circle cx="78" cy="42" r="2.5" fill="#ef4444" opacity="0.4"/>
+
+        <!-- migration-plan green cluster (HIT - brighter) -->
+        <circle cx="115" cy="78" r="5" fill="#22c55e" opacity="0.8"/>
+        <circle cx="136" cy="67" r="4" fill="#22c55e" opacity="0.7"/>
+        <circle cx="104" cy="94" r="3.5" fill="#22c55e" opacity="0.6"/>
+        <circle cx="144" cy="87" r="4.2" fill="#22c55e" opacity="0.7"/>
+        <circle cx="124" cy="100" r="3" fill="#22c55e" opacity="0.5"/>
+
+        <!-- team-handbook blue cluster -->
+        <circle cx="180" cy="122" r="4" fill="#3b82f6" opacity="0.6"/>
+        <circle cx="197" cy="111" r="3" fill="#3b82f6" opacity="0.5"/>
+        <circle cx="172" cy="138" r="2.5" fill="#3b82f6" opacity="0.45"/>
+        <circle cx="203" cy="134" r="3.2" fill="#3b82f6" opacity="0.55"/>
+
+        <!-- vendor amber sparse -->
+        <circle cx="75" cy="132" r="2.5" fill="#f59e0b" opacity="0.4"/>
+        <circle cx="90" cy="144" r="2" fill="#f59e0b" opacity="0.35"/>
+      </g>
+
+      <!-- Cluster similarity lines -->
+      <g stroke-width="0.5" opacity="0.18">
+        <line x1="48" y1="38" x2="67" y2="29" stroke="#ef4444"/>
+        <line x1="48" y1="38" x2="63" y2="48" stroke="#ef4444"/>
+        <line x1="67" y1="29" x2="78" y2="42" stroke="#ef4444"/>
+        <line x1="115" y1="78" x2="136" y2="67" stroke="#22c55e"/>
+        <line x1="115" y1="78" x2="144" y2="87" stroke="#22c55e"/>
+        <line x1="136" y1="67" x2="144" y2="87" stroke="#22c55e"/>
+        <line x1="104" y1="94" x2="124" y2="100" stroke="#22c55e"/>
+        <line x1="115" y1="78" x2="104" y2="94" stroke="#22c55e"/>
+        <line x1="180" y1="122" x2="197" y2="111" stroke="#3b82f6"/>
+        <line x1="180" y1="122" x2="203" y2="134" stroke="#3b82f6"/>
+        <line x1="197" y1="111" x2="203" y2="134" stroke="#3b82f6"/>
+      </g>
+
+      <!-- Hit ring animation -->
+      <circle cx="125" cy="82" r="22" fill="none" stroke="#22c55e" stroke-width="0.6" opacity="0.12" class="hit"/>
+    </g>
+
+    <!-- Activity log -->
+    <g transform="translate(18, 310)">
+      <text x="0" y="0" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#22c55e" opacity="0.7">&#10003; parsed 42 docs (PDF, DOCX, MD)</text>
+      <text x="0" y="15" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#a855f7" opacity="0.7">&#10003; 847 chunks embedded (BGE-M3)</text>
+      <text x="0" y="30" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#f43f5e" opacity="0.7">&#10003; 2,541 questions generated</text>
+      <text x="0" y="45" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#f59e0b" opacity="0.7">&#10003; summaries: 42 doc + 186 section</text>
+      <text x="0" y="60" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#3b82f6" opacity="0.7">&#10003; hybrid search ready via MCP</text>
+    </g>
+
+    <!-- Tech badges -->
+    <g transform="translate(18, 416)">
+      <rect width="64" height="16" rx="4" fill="#a855f7" opacity="0.1" stroke="#a855f7" stroke-width="0.6"/>
+      <text x="32" y="12" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#a855f7" text-anchor="middle" opacity="0.7" font-weight="600">Qdrant</text>
+      <rect x="72" width="60" height="16" rx="4" fill="#06b6d4" opacity="0.1" stroke="#06b6d4" stroke-width="0.6"/>
+      <text x="102" y="12" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#06b6d4" text-anchor="middle" opacity="0.7" font-weight="600">SQLite</text>
+      <rect x="140" width="62" height="16" rx="4" fill="#22c55e" opacity="0.1" stroke="#22c55e" stroke-width="0.6"/>
+      <text x="171" y="12" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#22c55e" text-anchor="middle" opacity="0.7" font-weight="600">BGE-M3</text>
+      <rect x="210" width="72" height="16" rx="4" fill="#ef4444" opacity="0.1" stroke="#ef4444" stroke-width="0.6"/>
+      <text x="246" y="12" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#ef4444" text-anchor="middle" opacity="0.7" font-weight="600">Reranker</text>
+    </g>
+  </g>
+
+
+  <!-- ================================================================ -->
+  <!-- FLOW: Center to Right                                            -->
+  <!-- ================================================================ -->
+  <g filter="url(#glow)">
+    <path d="M 570,230 C 588,230 604,230 622,230" stroke="url(#flowRight)" stroke-width="1.5" fill="none"/>
+  </g>
+  <circle r="3" fill="#a855f7" opacity="0.8">
+    <animateMotion dur="2.5s" repeatCount="indefinite" path="M 570,230 C 588,230 604,230 622,230" begin="0.8s" keyTimes="0;1" calcMode="spline" keySplines="0.4 0 0.2 1"/>
+  </circle>
+  <polygon points="619,224 627,230 619,236" fill="#a855f7" opacity="0.4"/>
+
+
+  <!-- ================================================================ -->
+  <!-- RIGHT: Real MCP tool output in Claude Code                       -->
+  <!-- ================================================================ -->
+  <g transform="translate(622, 24)" filter="url(#panelShadow)">
+    <!-- Terminal window -->
+    <rect width="454" height="442" rx="8" fill="#111827" stroke="#1e3a5f" stroke-width="1"/>
+
+    <!-- Title bar -->
+    <rect width="454" height="32" rx="8" fill="#0f172a"/>
+    <rect y="24" width="454" height="8" fill="#0f172a"/>
+    <circle cx="16" cy="16" r="4.5" fill="#ef4444" opacity="0.6"/>
+    <circle cx="32" cy="16" r="4.5" fill="#f59e0b" opacity="0.6"/>
+    <circle cx="48" cy="16" r="4.5" fill="#22c55e" opacity="0.6"/>
+    <text x="227" y="20" font-family="'JetBrains Mono', monospace" font-size="11" fill="#64748b" text-anchor="middle">Claude Code</text>
+
+    <!-- User query -->
+    <g transform="translate(18, 48)">
+      <text x="0" y="12" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#3b82f6" font-weight="700">you</text>
+      <text x="0" y="32" font-family="'IBM Plex Sans', sans-serif" font-size="13.5" fill="#e2e8f0">What's our rollback plan for the database migration?</text>
+    </g>
+
+    <!-- Tool call indicator -->
+    <g transform="translate(18, 90)">
+      <rect width="370" height="20" rx="4" fill="#1e3a5f" opacity="0.25"/>
+      <text x="8" y="14" font-family="'JetBrains Mono', monospace" font-size="9" fill="#3b82f6" opacity="0.55">search_documents("database migration rollback plan")</text>
+    </g>
+
+    <!-- MCP response -->
+    <g transform="translate(18, 120)">
+      <text x="0" y="12" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#a855f7" font-weight="700">claude</text>
+
+      <!-- Found header -->
+      <text x="0" y="32" font-family="'IBM Plex Sans', sans-serif" font-size="12.5" fill="#94a3b8">Found</text>
+      <text x="42" y="32" font-family="'JetBrains Mono', monospace" font-size="12.5" fill="#e2e8f0" font-weight="700">5 results</text>
+      <text x="124" y="32" font-family="'IBM Plex Sans', sans-serif" font-size="12.5" fill="#94a3b8">across</text>
+      <text x="170" y="32" font-family="'JetBrains Mono', monospace" font-size="12.5" fill="#e2e8f0" font-weight="700">2 documents</text>
+
+      <!-- Document group 1 -->
+      <g transform="translate(0, 46)">
+        <text x="0" y="12" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#22c55e" font-weight="700">## migration-plan.md</text>
+        <text x="0" y="27" font-family="'IBM Plex Sans', sans-serif" font-size="9.5" fill="#64748b" opacity="0.8">Topics: database, migration, rollback, dual-write</text>
+
+        <!-- Chunk [1] -->
+        <g transform="translate(0, 37)">
+          <rect width="418" height="66" rx="5" fill="#0a0f1a" stroke="#22c55e" stroke-width="0.7"/>
+          <rect x="0" y="0" width="3.5" height="66" rx="1.5" fill="#22c55e" opacity="0.7"/>
+
+          <text x="14" y="16" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#22c55e" opacity="0.9">[1] (score: 0.961)</text>
+          <text x="145" y="16" font-family="'JetBrains Mono', monospace" font-size="9" fill="#64748b" opacity="0.7">&#167; Database Migration Strategy, pp. 12-14</text>
+
+          <text x="14" y="34" font-family="'IBM Plex Sans', sans-serif" font-size="11" fill="#94a3b8">We decided to run dual-write for 30 days before cutover.</text>
+          <text x="14" y="48" font-family="'IBM Plex Sans', sans-serif" font-size="11" fill="#94a3b8">Rollback plan: restore from the hourly snapshots. The</text>
+          <text x="14" y="60" font-family="'IBM Plex Sans', sans-serif" font-size="11" fill="#64748b" opacity="0.7">recovery team owns the runbook for both scenarios...</text>
+        </g>
+
+        <!-- Chunk [2] -->
+        <g transform="translate(0, 110)">
+          <rect width="418" height="48" rx="5" fill="#0a0f1a" stroke="#22c55e" stroke-width="0.5" opacity="0.7"/>
+          <rect x="0" y="0" width="3.5" height="48" rx="1.5" fill="#22c55e" opacity="0.45"/>
+
+          <text x="14" y="16" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#22c55e" opacity="0.7">[2] (score: 0.884)</text>
+          <text x="145" y="16" font-family="'JetBrains Mono', monospace" font-size="9" fill="#64748b" opacity="0.6">&#167; Risk Assessment, p. 18</text>
+
+          <text x="14" y="34" font-family="'IBM Plex Sans', sans-serif" font-size="11" fill="#64748b" opacity="0.8">If dual-write latency exceeds 200ms, abort migration</text>
+          <text x="14" y="46" font-family="'IBM Plex Sans', sans-serif" font-size="11" fill="#64748b" opacity="0.7">and fail back to primary. SLA impact: max 30s...</text>
+        </g>
+      </g>
+
+      <!-- Document group 2 (dimmer) -->
+      <g transform="translate(0, 212)">
+        <text x="0" y="12" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#ef4444" opacity="0.7" font-weight="600">## q3-ops-review.pdf</text>
+        <text x="0" y="27" font-family="'IBM Plex Sans', sans-serif" font-size="9.5" fill="#64748b" opacity="0.6">Topics: operations, throughput, infrastructure</text>
+
+        <!-- Chunk [3] -->
+        <g transform="translate(0, 36)">
+          <rect width="418" height="42" rx="5" fill="#0a0f1a" stroke="#334155" stroke-width="0.5" opacity="0.6"/>
+          <rect x="0" y="0" width="3.5" height="42" rx="1.5" fill="#ef4444" opacity="0.3"/>
+
+          <text x="14" y="16" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#ef4444" opacity="0.6">[3] (score: 0.723)</text>
+          <text x="145" y="16" font-family="'JetBrains Mono', monospace" font-size="9" fill="#64748b" opacity="0.5">&#167; Infrastructure Changes, p. 8</text>
+
+          <text x="14" y="34" font-family="'IBM Plex Sans', sans-serif" font-size="11" fill="#64748b" opacity="0.7">Migration timeline extended to accommodate additional...</text>
+        </g>
+      </g>
+
+      <!-- Footer -->
+      <g transform="translate(0, 300)">
+        <line x1="0" y1="0" x2="418" y2="0" stroke="#334155" stroke-width="0.6" opacity="0.5"/>
+        <text x="0" y="16" font-family="'JetBrains Mono', monospace" font-size="9" fill="#64748b" opacity="0.55">Query classified as: specific | 5 results from 2 documents</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Tagline removed — redundant with page heading and caused overlap with footer -->
+</svg>

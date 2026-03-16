@@ -469,7 +469,7 @@ window.__App = function App() {
         padding: mobile ? "12px 10px" : "20px 24px",
       }}
     >
-      <div style={{ maxWidth: 920, margin: "0 auto" }}>
+      <div style={{ maxWidth: 1120, margin: "0 auto" }}>
         {/* Header */}
         <div style={{ marginBottom: 22 }}>
           <div
@@ -593,9 +593,9 @@ window.__App = function App() {
             {/* Quick start */}
             <div
               style={{
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                borderRadius: 8,
+                background: `linear-gradient(135deg, ${C.greenDim}, ${C.cyanDim})`,
+                border: `1px solid #1a6b4a`,
+                borderRadius: 10,
                 padding: 16,
                 marginBottom: 16,
               }}
@@ -603,10 +603,10 @@ window.__App = function App() {
               <div
                 style={{
                   color: C.green,
-                  fontSize: 10,
+                  fontSize: 13,
                   fontWeight: 600,
                   textTransform: "uppercase",
-                  letterSpacing: 1,
+                  letterSpacing: 1.5,
                   marginBottom: 12,
                 }}
               >
@@ -635,126 +635,11 @@ rag search "your query" # test it from the terminal`}
               </div>
             </div>
 
-            {/* Why I Built This */}
-            <div
-              style={{
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                borderRadius: 10,
-                padding: "20px 22px",
-                marginBottom: 16,
-              }}
-            >
-              <div
-                style={{
-                  color: C.amber,
-                  fontSize: 10,
-                  fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: 1,
-                  marginBottom: 10,
-                }}
-              >
-                Why I Built This
-              </div>
-              <p style={{ color: C.text, fontSize: 14, lineHeight: 1.65, margin: 0 }}>
-                Not every document you work with belongs in a shared knowledge base.
-                Not to mention they're scattered across folders you'll never organize,
-                and without search you're left feeding files to AI tools one at a time.{" "}
-                <span style={{ color: C.accent, fontWeight: 500 }}>Local RAG</span>{" "}
-                indexes your <span style={{ color: C.accent, fontWeight: 500 }}>local folders</span> and
-                gives your AI tools{" "}
-                <span style={{ color: C.accent, fontWeight: 500 }}>semantic search</span>{" "}
-                over everything, automatically.
-                Fully local. Summarization uses your approved LLM CLI, everything else{" "}
-                <span style={{ color: C.accent, fontWeight: 500 }}>stays on your machine</span>.
-              </p>
-            </div>
-
-            {/* Why this exists */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: mobile ? "1fr" : "1fr 1fr",
-                gap: 12,
-                marginBottom: 16,
-              }}
-            >
-              {[
-                {
-                  icon: "🔒",
-                  title: "Fully Private",
-                  desc: "All models run locally. Your documents never leave your machine. No cloud APIs needed for core search and retrieval.",
-                  color: C.green,
-                },
-                {
-                  icon: "🧠",
-                  title: "Production-Grade Retrieval",
-                  desc: "Not toy search. 3-lane prefetch across a summary pyramid, RRF fusion, intelligent query classification, ONNX cross-encoder reranking.",
-                  color: C.purple,
-                },
-                {
-                  icon: "📄",
-                  title: "Multi-Format Parsing",
-                  desc: "PDF (with OCR), DOCX, TXT, and Markdown. Docling parser runs in a subprocess for memory isolation. Handles scanned documents.",
-                  color: C.amber,
-                },
-                {
-                  icon: "🔄",
-                  title: "Always Current",
-                  desc: "Filesystem watcher auto-indexes on changes. Content-hash dedup skips unchanged files. Re-index a single file or everything.",
-                  color: C.cyan,
-                },
-                {
-                  icon: "💰",
-                  title: "$0 Infrastructure",
-                  desc: "Single Python process + Qdrant Docker container. No AWS, no subscriptions. One-time model download (~2.7GB) and you're set.",
-                  color: C.green,
-                },
-                {
-                  icon: "✨",
-                  title: "Smart Summaries",
-                  desc: "Pluggable LLM summarizer generates a 3-level document pyramid (phrase → sentence → paragraph) plus section summaries for better ranking.",
-                  color: C.rose,
-                },
-                {
-                  icon: "🧩",
-                  title: "Semantic Chunking",
-                  desc: "Opt-in semantic boundary detection using BGE-M3 sentence embeddings. Max-Min algorithm finds topic shifts within sections. Min 64 / max 768 token guardrails.",
-                  color: C.green,
-                },
-                {
-                  icon: "❓",
-                  title: "Auto Questions",
-                  desc: "LLM generates 3 questions per chunk at index time. Questions enrich dense vectors and are keyword-indexed for better recall. Graceful degradation if LLM unavailable.",
-                  color: C.amber,
-                },
-              ].map((item, i) => (
-                <div
-                  key={i}
-                  style={{
-                    background: C.surface,
-                    border: `1px solid ${C.border}`,
-                    borderRadius: 8,
-                    padding: "14px 16px",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontSize: 18 }}>{item.icon}</span>
-                    <span style={{ color: item.color, fontWeight: 700, fontSize: 13, fontFamily: mono }}>
-                      {item.title}
-                    </span>
-                  </div>
-                  <div style={{ color: C.muted, fontSize: 11, lineHeight: 1.5 }}>{item.desc}</div>
-                </div>
-              ))}
-            </div>
-
             {/* MCP Integration callout */}
             <div
               style={{
-                background: `linear-gradient(135deg, ${C.accentDim}, ${C.purpleDim})`,
-                border: `1px solid ${C.borderActive}`,
+                background: `linear-gradient(135deg, ${C.purpleDim}, ${C.cyanDim})`,
+                border: `1px solid #5b3a9e`,
                 borderRadius: 10,
                 padding: "20px 22px",
                 marginBottom: 16,
@@ -763,7 +648,7 @@ rag search "your query" # test it from the terminal`}
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: 24 }}>🔌</span>
                 <div>
-                  <div style={{ color: C.accent, fontWeight: 700, fontSize: 15, fontFamily: mono }}>
+                  <div style={{ color: C.purple, fontWeight: 700, fontSize: 15, fontFamily: mono }}>
                     MCP Integration
                   </div>
                   <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>
@@ -817,6 +702,167 @@ rag search "your query" # test it from the terminal`}
                 After setup, just ask your AI: <em style={{ color: C.text }}>"Search my documents for gate operations"</em> — it
                 calls <code style={{ fontFamily: mono, color: C.accent, fontSize: 10 }}>search_documents</code> automatically
                 and returns cited evidence with file paths, sections, and page numbers.
+              </div>
+            </div>
+
+            {/* Why I Built This */}
+            <div
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                padding: "20px 22px",
+                marginBottom: 16,
+              }}
+            >
+              <div
+                style={{
+                  color: C.amber,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1.5,
+                  marginBottom: 10,
+                }}
+              >
+                Why I Built This
+              </div>
+              <p style={{ color: C.text, fontSize: 14, lineHeight: 1.65, margin: 0 }}>
+                Not every document you work with belongs in a shared knowledge base.
+                Not to mention they're scattered across folders you'll never organize,
+                and without search you're left feeding files to AI tools one at a time.{" "}
+                <span style={{ color: C.accent, fontWeight: 500 }}>Local RAG</span>{" "}
+                indexes your <span style={{ color: C.accent, fontWeight: 500 }}>local folders</span> and
+                gives your AI tools{" "}
+                <span style={{ color: C.accent, fontWeight: 500 }}>semantic search</span>{" "}
+                over everything, automatically.
+                Fully local. Summarization uses your approved LLM CLI, everything else{" "}
+                <span style={{ color: C.accent, fontWeight: 500 }}>stays on your machine</span>.
+              </p>
+            </div>
+
+            {/* Features section — hero image + feature cards grouped visually */}
+            <div
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 12,
+                padding: mobile ? "16px 14px" : "22px 24px",
+                marginBottom: 16,
+              }}
+            >
+              <div
+                style={{
+                  color: C.accent,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 1.5,
+                  marginBottom: 16,
+                }}
+              >
+                How It Works
+              </div>
+
+              {/* Hero pipeline visualization — hidden on mobile */}
+              {!mobile && (
+                <div
+                  style={{
+                    marginBottom: 20,
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    border: `1px solid ${C.border}`,
+                    background: C.bg,
+                  }}
+                >
+                  <img
+                    src="hero-pipeline.svg"
+                    alt="local-rag pipeline: your local documents are indexed, embedded into vector space, and searchable via MCP tools in Claude Code"
+                    style={{
+                      width: "100%",
+                      height: "auto",
+                      display: "block",
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Feature cards grid */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: mobile ? "1fr" : "1fr 1fr",
+                  gap: 12,
+                }}
+              >
+                {[
+                  {
+                    icon: "🔒",
+                    title: "Fully Private",
+                    desc: "All models run locally. Your documents never leave your machine. No cloud APIs needed for core search and retrieval.",
+                    color: C.green,
+                  },
+                  {
+                    icon: "🧠",
+                    title: "Production-Grade Retrieval",
+                    desc: "Not toy search. 3-lane prefetch across a summary pyramid, RRF fusion, intelligent query classification, ONNX cross-encoder reranking.",
+                    color: C.purple,
+                  },
+                  {
+                    icon: "📄",
+                    title: "Multi-Format Parsing",
+                    desc: "PDF (with OCR), DOCX, TXT, and Markdown. Docling parser runs in a subprocess for memory isolation. Handles scanned documents.",
+                    color: C.amber,
+                  },
+                  {
+                    icon: "🔄",
+                    title: "Always Current",
+                    desc: "Filesystem watcher auto-indexes on changes. Content-hash dedup skips unchanged files. Re-index a single file or everything.",
+                    color: C.cyan,
+                  },
+                  {
+                    icon: "💰",
+                    title: "$0 Infrastructure",
+                    desc: "Single Python process + Qdrant Docker container. No AWS, no subscriptions. One-time model download (~2.7GB) and you're set.",
+                    color: C.green,
+                  },
+                  {
+                    icon: "✨",
+                    title: "Smart Summaries",
+                    desc: "Pluggable LLM summarizer generates a 3-level document pyramid (phrase → sentence → paragraph) plus section summaries for better ranking.",
+                    color: C.rose,
+                  },
+                  {
+                    icon: "🧩",
+                    title: "Semantic Chunking",
+                    desc: "Opt-in semantic boundary detection using BGE-M3 sentence embeddings. Max-Min algorithm finds topic shifts within sections. Min 64 / max 768 token guardrails.",
+                    color: C.green,
+                  },
+                  {
+                    icon: "❓",
+                    title: "Auto Questions",
+                    desc: "LLM generates 3 questions per chunk at index time. Questions enrich dense vectors and are keyword-indexed for better recall. Graceful degradation if LLM unavailable.",
+                    color: C.amber,
+                  },
+                ].map((item, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      background: C.bg,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 8,
+                      padding: "14px 16px",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: 18 }}>{item.icon}</span>
+                      <span style={{ color: item.color, fontWeight: 700, fontSize: 13, fontFamily: mono }}>
+                        {item.title}
+                      </span>
+                    </div>
+                    <div style={{ color: C.muted, fontSize: 11, lineHeight: 1.5 }}>{item.desc}</div>
+                  </div>
+                ))}
               </div>
             </div>
 
