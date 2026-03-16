@@ -14,6 +14,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _configure_logging() -> None:
+    """Configure logging to stderr (stdout reserved for JSON-RPC)."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
+
+
 _INSTRUCTIONS_TEMPLATE = """\
 local-rag is a local document search system that indexes files (PDF, DOCX, TXT, MD) \
 from configured folders on this machine. It provides hybrid semantic + keyword search \
@@ -77,12 +87,7 @@ async def run_stdio_server(config: AppConfig) -> None:
     """
     from mcp.server.stdio import stdio_server
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        stream=sys.stderr,
-    )
-
+    _configure_logging()
     server = create_server(config)
 
     async with stdio_server() as (read_stream, write_stream):
@@ -100,12 +105,7 @@ async def run_http_server(config: AppConfig) -> None:
     from starlette.applications import Starlette
     from starlette.routing import Mount
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        stream=sys.stderr,
-    )
-
+    _configure_logging()
     server = create_server(config)
 
     transport = StreamableHTTPServerTransport(

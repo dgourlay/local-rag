@@ -18,14 +18,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DETAIL_FIELD_MAP: dict[str, str] = {
-    "8w": "summary_8w",
-    "16w": "summary_16w",
-    "32w": "summary_32w",
-    "64w": "summary_64w",
-    "128w": "summary_128w",
-}
-
 _DETAIL_SCHEMA: dict[str, object] = {
     "type": "string",
     "enum": ["8w", "16w", "32w", "64w", "128w"],
@@ -35,11 +27,32 @@ _DETAIL_SCHEMA: dict[str, object] = {
     ),
 }
 
+_QUERY_SCHEMA: dict[str, object] = {
+    "type": "string",
+    "description": (
+        "Natural-language search query. Use specific multi-word phrases "
+        'rather than single keywords — "employee onboarding process '
+        'timeline" works better than "onboarding". Include domain-specific '
+        "terms that would appear in the target documents. The query is used "
+        "for both semantic (meaning-based) and keyword matching, so exact "
+        "terminology helps."
+    ),
+}
+
+_FOLDER_FILTER_SCHEMA: dict[str, object] = {
+    "type": "string",
+    "description": (
+        "Restrict results to documents within this folder path. Use an "
+        'absolute path prefix — e.g., "/Users/you/Documents/Work". '
+        "Documents in subfolders are included. Omit to search all indexed "
+        "folders."
+    ),
+}
+
 
 def _get_doc_summary(doc: DocumentRow, detail: DetailLevel) -> str | None:
     """Look up the summary field on DocumentRow for the given detail level."""
-    field_name = _DETAIL_FIELD_MAP.get(detail, "summary_32w")
-    return getattr(doc, field_name, None)
+    return getattr(doc, f"summary_{detail}", None)
 
 
 class _Components:
@@ -117,26 +130,8 @@ _TOOLS: list[types.Tool] = [
         inputSchema={
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": (
-                        "Natural-language search query. Use specific multi-word phrases "
-                        'rather than single keywords — "employee onboarding process '
-                        'timeline" works better than "onboarding". Include domain-specific '
-                        "terms that would appear in the target documents. The query is used "
-                        "for both semantic (meaning-based) and keyword matching, so exact "
-                        "terminology helps."
-                    ),
-                },
-                "folder_filter": {
-                    "type": "string",
-                    "description": (
-                        "Restrict results to documents within this folder path. Use an "
-                        'absolute path prefix — e.g., "/Users/you/Documents/Work". '
-                        "Documents in subfolders are included. Omit to search all indexed "
-                        "folders."
-                    ),
-                },
+                "query": _QUERY_SCHEMA,
+                "folder_filter": _FOLDER_FILTER_SCHEMA,
                 "date_filter": {
                     "type": "string",
                     "description": (
@@ -224,15 +219,7 @@ _TOOLS: list[types.Tool] = [
         inputSchema={
             "type": "object",
             "properties": {
-                "folder_filter": {
-                    "type": "string",
-                    "description": (
-                        "Restrict results to documents within this folder path. Use an "
-                        'absolute path prefix — e.g., "/Users/you/Documents/Work". '
-                        "Documents in subfolders are included. Omit to search all indexed "
-                        "folders."
-                    ),
-                },
+                "folder_filter": _FOLDER_FILTER_SCHEMA,
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of documents to return (default 20)",
@@ -273,26 +260,8 @@ _TOOLS: list[types.Tool] = [
         inputSchema={
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": (
-                        "Natural-language search query. Use specific multi-word phrases "
-                        'rather than single keywords — "employee onboarding process '
-                        'timeline" works better than "onboarding". Include domain-specific '
-                        "terms that would appear in the target documents. The query is used "
-                        "for both semantic (meaning-based) and keyword matching, so exact "
-                        "terminology helps."
-                    ),
-                },
-                "folder_filter": {
-                    "type": "string",
-                    "description": (
-                        "Restrict results to documents within this folder path. Use an "
-                        'absolute path prefix — e.g., "/Users/you/Documents/Work". '
-                        "Documents in subfolders are included. Omit to search all indexed "
-                        "folders."
-                    ),
-                },
+                "query": _QUERY_SCHEMA,
+                "folder_filter": _FOLDER_FILTER_SCHEMA,
                 "top_k": {
                     "type": "integer",
                     "description": "Number of results to return (default 5)",
@@ -340,6 +309,15 @@ def register_tools(server: Server, config: AppConfig) -> None:
             return _error_content(f"Error executing {name}: {type(exc).__name__}: {exc}")
 
 
+def _append_debug_info(lines: list[str], debug_info: dict[str, Any] | None) -> None:
+    """Append debug info block to output lines if present."""
+    if debug_info:
+        lines.append("")
+        lines.append("Debug info:")
+        for key, value in debug_info.items():
+            lines.append(f"  {key}: {value}")
+
+
 def _format_results_as_text(
     hits: list[CitedEvidence],
     doc_lookup: dict[str, DocumentRow | None],
@@ -351,11 +329,7 @@ def _format_results_as_text(
         lines: list[str] = ["No results found."]
         if query_classification:
             lines.append(f"\n---\nQuery classified as: {query_classification}")
-        if debug_info:
-            lines.append("")
-            lines.append("Debug info:")
-            for key, value in debug_info.items():
-                lines.append(f"  {key}: {value}")
+        _append_debug_info(lines, debug_info)
         return "\n".join(lines)
 
     # Group hits by doc_id, preserving rank order
@@ -410,11 +384,7 @@ def _format_results_as_text(
     lines.append("---")
     lines.append(" | ".join(footer_parts))
 
-    if debug_info:
-        lines.append("")
-        lines.append("Debug info:")
-        for key, value in debug_info.items():
-            lines.append(f"  {key}: {value}")
+    _append_debug_info(lines, debug_info)
 
     return "\n".join(lines)
 
@@ -622,10 +592,7 @@ async def _handle_quick_search(
     )
 
     # Collect unique doc_ids from results, preserving order
-    seen_doc_ids: list[str] = []
-    for hit in result.hits:
-        if hit.doc_id not in seen_doc_ids:
-            seen_doc_ids.append(hit.doc_id)
+    seen_doc_ids = list(dict.fromkeys(hit.doc_id for hit in result.hits))
 
     # Fetch document details from SQLite
     lines: list[str] = []
