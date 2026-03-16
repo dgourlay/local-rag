@@ -456,6 +456,7 @@ window.__App = function App() {
     { id: "retrieval", label: "Retrieval Engine" },
     { id: "mcp", label: "MCP Tools" },
     { id: "cli", label: "CLI Reference" },
+    { id: "changelog", label: "Changelog" },
     { id: "cleanup", label: "Cleanup & Uninstall" },
   ];
 
@@ -1932,6 +1933,174 @@ transport = "stdio"`}
         )}
 
         {/* Cleanup & Uninstall tab */}
+        {tab === "changelog" && (
+          <div>
+            <div
+              style={{
+                color: C.muted,
+                fontSize: 12,
+                marginBottom: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              Release history for local-rag. Each version marks a major milestone in the project.
+            </div>
+
+            {[
+              {
+                version: "v0.5.0",
+                date: "2026-03-16",
+                title: "Intelligence Upgrade",
+                summary: "Semantic chunking, auto-generated questions, and MCP tool guidance make search smarter and more precise.",
+                added: [
+                  "Semantic chunking (opt-in): Max-Min algorithm with BGE-M3 sentence embeddings splits documents at natural topic boundaries",
+                  "Auto-generated questions: LLM generates 3 questions per chunk at index time for richer vector representations",
+                  "MCP tool guidance: enriched descriptions, ~600-word server instructions, 3 prompts (research, discover, catch-up)",
+                  "Hero pipeline SVG on GitHub Pages",
+                  "Stale file detection: rag index removes vectors for deleted files",
+                ],
+                changed: [
+                  "MCP module refactored: shared schemas extracted, helper deduplication",
+                  "GitHub Pages: responsive mobile layout, polished overview",
+                ],
+              },
+              {
+                version: "v0.4.0",
+                date: "2026-03-12",
+                title: "Performance & Reliability",
+                summary: "11 pipeline optimizations for Apple Silicon, geometric pyramid summaries, and a hardened filesystem watcher.",
+                added: [
+                  "Geometric pyramid summaries: 5 document levels (8w-128w) and 3 section levels (8w-128w)",
+                  "Batch summarization: single LLM call per document instead of per-chunk",
+                  "Persistent Docling worker: reuses subprocess across files",
+                  "Early content-hash skip for unchanged files",
+                  "Watcher: deletion handling, startup re-scan, retry queue with poison-file quarantine",
+                  "Truncated JSON repair for LLM output",
+                ],
+                changed: [
+                  "11 indexing pipeline optimizations for Apple Silicon",
+                  "Docling parse timeout bumped to 360s, CLI timeout to 5 min",
+                  "Simple line-by-line progress replacing ANSI rolling display",
+                ],
+                fixed: [
+                  "--reindex detecting empty state after cancelled reindex",
+                  "Garbled/interleaved progress output",
+                  "Dashboard file count reflecting actual files on disk",
+                ],
+              },
+              {
+                version: "v0.3.0",
+                date: "2026-03-12",
+                title: "Public Release",
+                summary: "Renamed to local-rag, multi-LLM CLI support, Apache 2.0 license, and polished setup experience.",
+                added: [
+                  "Apache 2.0 license",
+                  "Multi-LLM CLI support: claude, kiro-cli, and codex auto-detected",
+                  "Cleanup & Uninstall docs",
+                  "rag mcp-config auto-detects installed MCP clients",
+                  "Model download during make setup",
+                ],
+                changed: [
+                  "Project renamed from dropbox-rag to local-rag",
+                  "rag init detects all available LLM CLIs",
+                  "Setup streamlined: graceful Docker check, correct Qdrant tag",
+                ],
+                fixed: [
+                  "Critical: INSERT OR REPLACE triggered CASCADE deleting all chunks",
+                  "Chunk persistence: prevent cascade on upsert",
+                  "Summarizer: pass prompts via stdin instead of temp files",
+                ],
+              },
+              {
+                version: "v0.2.0",
+                date: "2026-03-10",
+                title: "Real-World Hardening",
+                summary: "Full retrieval pipeline with 3-lane dense search, RRF fusion, and reranking. Rich terminal dashboard. Multi-client MCP.",
+                added: [
+                  "Full RAG retrieval pipeline: 3-lane dense prefetch + keyword search, RRF fusion, reranking, citations",
+                  "LLM-friendly output format for search results",
+                  "LLM summarization via CLI tool",
+                  "Rich terminal dashboard for rag status with MCP health checks",
+                  "--reindex CLI flag for full or single-file re-indexing",
+                  "Architecture visualizations for GitHub Pages",
+                  "Kiro MCP support and file extension selection in rag init",
+                ],
+                fixed: [
+                  "SQLite threading error in MCP handlers",
+                  "Three bugs found during real-world testing",
+                ],
+              },
+              {
+                version: "v0.1.0",
+                date: "2026-03-10",
+                title: "Initial Release",
+                summary: "Complete indexing pipeline, MCP server with 4 tools, CLI with 8 subcommands, and end-to-end test suite.",
+                added: [
+                  "13-stage indexing pipeline: classify, parse (Docling + text fallback), normalize, dedup, chunk, embed (BGE-M3), index to Qdrant",
+                  "MCP server: stdio + Streamable HTTP, 4 tools",
+                  "CLI: rag init, index, serve, watch, status, doctor, search, mcp-config",
+                  "Interactive setup wizard (rag init)",
+                  "Config system: TOML loader with Pydantic AppConfig",
+                  "Type layer: Pydantic v2 models, Protocols, Result types",
+                  "SQLite metadata store (WAL mode) + Qdrant vector store",
+                  "End-to-end test suite with fixture corpus",
+                ],
+              },
+            ].map((release, ri) => (
+              <div
+                key={release.version}
+                style={{
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  padding: 16,
+                  marginBottom: 12,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+                  <span
+                    style={{
+                      fontFamily: mono,
+                      fontSize: 14,
+                      fontWeight: 700,
+                      color: C.accent,
+                    }}
+                  >
+                    {release.version}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                    {release.title}
+                  </span>
+                  <span style={{ fontSize: 11, color: C.muted, fontFamily: mono }}>
+                    {release.date}
+                  </span>
+                </div>
+                <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.5, marginBottom: 10 }}>
+                  {release.summary}
+                </div>
+
+                {[
+                  { key: "added", label: "Added", symbol: "+" },
+                  { key: "changed", label: "Changed", symbol: "~" },
+                  { key: "fixed", label: "Fixed", symbol: "*" },
+                ].map((section) => release[section.key] && (
+                  <div key={section.key} style={{ marginBottom: 8 }}>
+                    <div style={{ color: C.muted, fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+                      {section.label}
+                    </div>
+                    {release[section.key].map((item, i) => (
+                      <div key={i} style={{ display: "flex", gap: 8, marginBottom: 3, fontSize: 12, lineHeight: 1.5 }}>
+                        <span style={{ color: C.muted, flexShrink: 0, fontFamily: mono }}>{section.symbol}</span>
+                        <span style={{ color: C.text }}>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
         {tab === "cleanup" && (
           <div>
             <div
