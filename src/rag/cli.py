@@ -244,6 +244,8 @@ def index(folder: str | None, single_file: str | None, reindex: str | None) -> N
     else:
         events = scan_folders(config.folders)
 
+    if single_file is None:
+        events.extend(_detect_deletions(config, {ev.file_path for ev in events}))
     _run_index(config, events)
 
 
@@ -271,6 +273,36 @@ def _single_file_events(file_path: str) -> list[FileEvent]:
             modified_at=modified_at,
         )
     ]
+
+
+def _detect_deletions(config: AppConfig, scanned_paths: set[str]) -> list[FileEvent]:
+    """Find tracked files that no longer exist on disk and return deletion events."""
+    from rag.db.connection import get_connection
+    from rag.db.migrations import run_migrations
+    from rag.db.models import SqliteMetadataDB
+    from rag.sync.scanner import classify_file_type
+    from rag.types import FileEvent, FileType
+
+    conn = get_connection(config.database.path)
+    run_migrations(conn)
+    db = SqliteMetadataDB(conn)
+
+    deletions: list[FileEvent] = []
+    for tracked_path in db.get_all_tracked_paths():
+        if tracked_path not in scanned_paths:
+            existing = db.get_sync_state(tracked_path)
+            if existing is not None:
+                ft = classify_file_type(Path(tracked_path))
+                deletions.append(
+                    FileEvent(
+                        file_path=tracked_path,
+                        content_hash=existing.content_hash,
+                        file_type=ft if ft is not None else FileType.TXT,
+                        event_type="deleted",
+                        modified_at=existing.modified_at,
+                    )
+                )
+    return deletions
 
 
 def _handle_reindex(target: str, config: AppConfig, folder: str | None) -> None:
