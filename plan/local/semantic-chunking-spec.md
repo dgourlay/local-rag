@@ -393,6 +393,32 @@ Add a check for spaCy availability when semantic strategy is configured:
 
 No check needed when strategy is `"fixed"`.
 
+### 11.4 Interaction with Local Tools (Claude Code, kiro-cli)
+
+Semantic chunking is invisible to MCP clients by design — Claude Code and kiro-cli call the same 5 MCP tools with the same parameters and get back the same response schema regardless of chunking strategy. The quality improvement is in the chunks themselves, not the API surface.
+
+**What changes for the calling LLM:**
+- Search results may have different chunk boundaries (more topically coherent, variable size). The `chunk_id`, `section`, `page_number`, and `score` fields are unchanged.
+- Chunk text may be shorter or longer than the fixed 512-token chunks. Callers should not assume a fixed chunk size.
+- `get_document_context` with `window` still works — adjacent chunks are still ordered by `chunk_order` within a section.
+
+**What does NOT change:**
+- Tool names, parameters, and response schemas — identical.
+- Server instructions and MCP prompts (from `mcp-tool-guidance-spec.md`) — no chunking-strategy-specific guidance needed because the tools abstract away the chunking layer.
+- `get_sync_status` and `list_recent_documents` — unaffected.
+
+**`get_sync_status` addition:**
+Include the active chunking strategy in the sync status response so the calling LLM can see it:
+
+```json
+{
+  "chunking_strategy": "semantic",
+  ...
+}
+```
+
+This is a single new field in the `get_sync_status` payload. It helps users (and the calling LLM) confirm which strategy is active without running `rag status` in a separate terminal.
+
 ---
 
 ## 12. Testing
