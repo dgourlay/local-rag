@@ -19,7 +19,7 @@ Parent spec: `plan/local/local-rag-spec.md` §8.
 | Parameter descriptions | **Enrich `query`, `detail`, `format`, `debug`, `folder_filter`** | These are the parameters where the model most often makes poor choices. Other parameters (top_k, limit, window) are self-explanatory. |
 | Server instructions | **Single static string, ~600 words** | Set via `server_instructions` kwarg on MCP `Server()` constructor. Describes the recommended tool workflow (scout → search → drill-down), folder structure context, and query formulation tips. |
 | MCP prompts | **3 prompts** (research, discover, catch-up) | Prompts are user-initiated slash commands. They return multi-message templates that guide the LLM through a workflow. Low implementation cost — just register prompt handlers. |
-| Folder descriptions in config | **Yes, optional `[folders.descriptions]` table** | Lets users label their folders (e.g., "Work reports" or "Personal notes"). Injected into server instructions at startup. Simple TOML addition. |
+| Folder descriptions in config | **No** — plain folder paths only | Nobody has asked for this. Folder paths in server instructions are sufficient context. Can be added later as a trivial config addition if users request it. |
 | Configurability of descriptions | **No** — descriptions are hardcoded | Only 5 tools, all internal. No reason to support env-var overrides like GitHub MCP Server (which has 30+ tools across many use cases). Folder descriptions are the one exception. |
 | Backward compatibility | **Fully backward compatible** | All changes are additive string content. No tool renames, no schema changes, no new required parameters. |
 
@@ -109,7 +109,7 @@ ISO 8601 date string (e.g., "2025-01-01"). Only return documents modified on or 
 
 The following text is set as the `instructions` parameter on the MCP `Server()` constructor. It is returned to the client during the MCP `initialize` handshake and provides cross-cutting guidance that applies across all tools.
 
-The `{folders_block}` placeholder is replaced at startup with folder descriptions from config (see §8). If no folder descriptions are configured, a plain list of folder paths is used instead.
+The `{folders_block}` placeholder is replaced at startup with a bulleted list of configured folder paths from `config.folders.paths`.
 
 ```
 local-rag is a local document search system that indexes files (PDF, DOCX, TXT, MD) from configured folders on this machine. It provides hybrid semantic + keyword search with cross-encoder reranking over the indexed collection.
@@ -236,7 +236,6 @@ Where `folder_clause` is `f" Filter to folder: {folder}."` if folder is provided
 
 | Name | Description | Required |
 |---|---|---|
-| `days` | How many days back to look (default: 7) | No |
 | `folder` | Restrict to a specific folder path | No |
 
 **Returned messages:**
@@ -248,13 +247,13 @@ Where `folder_clause` is `f" Filter to folder: {folder}."` if folder is provided
         content=TextContent(
             type="text",
             text=(
-                f"Summarize what's changed in my documents in the last {days} days."
+                "Summarize what's changed recently in my indexed documents."
                 f"{folder_clause}\n\n"
                 "Follow these steps:\n"
                 "1. Use list_recent_documents with detail '32w' to see recently "
                 f"modified documents.{folder_clause}\n"
-                f"2. Use search_documents with date_filter '{date_cutoff}' and a broad "
-                "query like 'summary overview' to find recently updated content.\n"
+                "2. Review the modification dates and identify which documents are new "
+                "or recently updated.\n"
                 "3. For each new or significantly changed document, briefly describe "
                 "what it covers and highlight anything that looks important or actionable."
             ),
@@ -263,7 +262,7 @@ Where `folder_clause` is `f" Filter to folder: {folder}."` if folder is provided
 ]
 ```
 
-Where `date_cutoff` is computed as `(today - days).isoformat()`.
+No `days` argument or date arithmetic. `list_recent_documents` already sorts by recency — the LLM can judge what counts as "recent" from the modification dates in the results. If the user wants a specific time window (e.g., "what changed this week?"), they can say so in natural language.
 
 ---
 
@@ -282,16 +281,16 @@ Modify `create_server()` to build the server instructions string and pass it to 
 ```python
 def create_server(config: AppConfig) -> Server:
     """Create and configure the MCP server with all tools registered."""
-    instructions = _build_server_instructions(config)
+    instructions = _build_instructions(config)
     server = Server("local-rag", instructions=instructions)
     register_tools(server, config)
     register_prompts(server, config)
     return server
 ```
 
-Add `_build_server_instructions(config: AppConfig) -> str` that:
-1. Reads `config.folders.paths` and `config.folders.descriptions` (if present).
-2. Builds the `{folders_block}` — a bulleted list of folder paths with optional descriptions.
+Add `_build_instructions(config: AppConfig) -> str` that:
+1. Reads `config.folders.paths`.
+2. Builds the `{folders_block}` — a bulleted list of folder paths.
 3. Returns the template from §5 with the placeholder replaced.
 
 ### 7.3 MCP Prompts (src/rag/mcp/prompts.py — new file)
@@ -301,62 +300,28 @@ New file `src/rag/mcp/prompts.py` containing:
 - `register_prompts(server: Server, config: AppConfig) -> None`: registers `@server.list_prompts()` and `@server.get_prompt()` handlers.
 - `_build_research_messages(topic: str, folder: str | None) -> list[types.PromptMessage]`
 - `_build_discover_messages(folder: str | None) -> list[types.PromptMessage]`
-- `_build_catchup_messages(days: int, folder: str | None) -> list[types.PromptMessage]`
+- `_build_catchup_messages(folder: str | None) -> list[types.PromptMessage]`
 
 All handlers are `async def` per MCP SDK requirements.
 
-### 7.4 Config Addition (src/rag/config.py)
+### 7.4 No Config Changes
 
-Add optional `descriptions` field to `FoldersConfig`:
-
-```python
-class FoldersConfig(BaseModel):
-    paths: list[Path]
-    extensions: list[FileType] = [FileType.PDF, FileType.DOCX, FileType.TXT, FileType.MD]
-    ignore: list[str] = ["**/node_modules", "**/.git", "**/venv", "**/__pycache__"]
-    descriptions: dict[str, str] = {}  # path → human-readable label
-```
-
-Example in `config.toml`:
-
-```toml
-[folders]
-paths = [
-    "/Users/you/Documents/Work",
-    "/Users/you/Documents/Reports",
-    "~/projects/notes"
-]
-
-[folders.descriptions]
-"/Users/you/Documents/Work" = "Work documents: project plans, design docs, meeting notes"
-"/Users/you/Documents/Reports" = "Quarterly and annual business reports"
-"~/projects/notes" = "Personal engineering notes and learning logs"
-```
+No changes to `config.py`. The server instructions template uses `config.folders.paths` directly — no new config fields needed. Folder descriptions (optional human-readable labels for each path) could be added later if users request it, but plain paths are sufficient for now.
 
 ---
 
 ## 8. Type Changes
 
-### 8.1 Prompt Arguments (src/rag/types.py)
+### 8.1 Prompt Arguments
 
-Add Pydantic models for prompt argument validation:
+No new Pydantic models in `types.py`. Prompt arguments are validated inline in `prompts.py` with plain dict access:
 
 ```python
-class ResearchPromptArgs(BaseModel):
-    topic: str
-    folder: str | None = None
-
-class DiscoverPromptArgs(BaseModel):
-    folder: str | None = None
-
-class CatchUpPromptArgs(BaseModel):
-    days: int = 7
-    folder: str | None = None
+topic = args["topic"]  # required — MCP SDK validates presence
+folder = args.get("folder")  # optional
 ```
 
-### 8.2 FoldersConfig Update
-
-As shown in §7.4. The `descriptions` field is `dict[str, str]` with an empty dict default — fully backward compatible with existing config files.
+These arguments don't cross module boundaries and are only used within prompt message builders. Adding Pydantic models for 1-2 field dicts is unnecessary overhead. The MCP SDK already validates required vs optional based on the argument schema in the prompt definition.
 
 ---
 
@@ -366,7 +331,6 @@ As shown in §7.4. The `descriptions` field is `dict[str, str]` with an empty di
 
 - **Prompt listing:** Call `handle_list_prompts()`, assert 3 prompts returned with correct names and argument schemas.
 - **Prompt messages:** Call `handle_get_prompt()` for each prompt with sample arguments, assert returned messages contain expected tool names and workflow steps.
-- **Catch-up date math:** Assert `date_cutoff` is computed correctly for various `days` values.
 - **Folder clause:** Assert folder filtering text is included when `folder` arg is provided, absent when omitted.
 
 ### 9.2 Unit Tests (tests/test_mcp_tools.py — existing)
@@ -377,8 +341,7 @@ As shown in §7.4. The `descriptions` field is `dict[str, str]` with an empty di
 ### 9.3 Server Instructions (tests/test_mcp_server.py)
 
 - **Instructions present:** Create server via `create_server()`, assert `server.instructions` is not None and contains "Recommended Workflow".
-- **Folder descriptions:** Configure folder descriptions in config, assert they appear in `server.instructions`.
-- **No descriptions:** Omit folder descriptions, assert plain path list appears instead.
+- **Folder paths:** Assert configured folder paths appear in `server.instructions`.
 
 ### 9.4 E2E Validation (tests/e2e/)
 
@@ -396,28 +359,68 @@ After deploying enriched descriptions, observe Claude Code behavior on these tes
 
 ---
 
-## 10. File Change Summary
+## 10. CLI Integration
+
+### 10.1 `rag doctor` Health Check
+
+Add a check that server instructions are buildable:
+
+- Verify `config.folders.paths` is non-empty (instructions need at least one folder)
+- Report: `✓ MCP server instructions configured (3 folders)` or `✗ No folders configured — server instructions will be empty`
+
+No changes needed for `rag status` — the enriched descriptions and instructions are static strings baked into the MCP server, not runtime state.
+
+### 10.2 `rag mcp-config --print`
+
+No changes needed. The MCP config JSON snippet already points to the server binary. The enriched descriptions and prompts are served by the MCP server itself — clients discover them via the MCP handshake.
+
+---
+
+## 11. Interaction with Local Tools (Claude Code, kiro-cli)
+
+### 11.1 Client Support Matrix
+
+| Feature | Claude Code | Claude Desktop | kiro-cli |
+|---|---|---|---|
+| Tool descriptions | Yes | Yes | Yes |
+| Parameter descriptions | Yes | Yes | Yes |
+| Server instructions | Yes | Yes | Verify at implementation time |
+| MCP prompts (slash commands) | Yes (`/prompt-name`) | Limited (via prompt picker) | Verify at implementation time |
+
+Tool descriptions and parameter descriptions are part of the core MCP protocol — all clients support them. Server instructions and prompts are newer MCP features. Claude Code is the primary target and fully supports both.
+
+### 11.2 Graceful Degradation for Prompts
+
+Clients that do not support `prompts/list` simply won't show the slash commands. The prompts are additive — they don't affect tool discovery or usage. Users of unsupported clients still benefit from the enriched tool descriptions and server instructions.
+
+### 11.3 Prompt Naming
+
+MCP prompts appear as slash commands in Claude Code. The prompt names (`research`, `discover`, `catch-up`) should be short and memorable. Claude Code prefixes them with the server name, so they appear as `/local-rag-research`, `/local-rag-discover`, `/local-rag-catch-up`. Verify this naming convention at implementation time.
+
+---
+
+## 12. File Change Summary
 
 | File | Change Type | Description |
 |---|---|---|
 | `src/rag/mcp/tools.py` | Modify | Replace tool and parameter description strings (§3, §4) |
-| `src/rag/mcp/server.py` | Modify | Add `_build_server_instructions()`, pass `instructions` to `Server()`, call `register_prompts()` (§7.2) |
+| `src/rag/mcp/server.py` | Modify | Add `_build_instructions()`, pass `instructions` to `Server()`, call `register_prompts()` (§7.2) |
 | `src/rag/mcp/prompts.py` | **New** | Prompt definitions and handlers (§7.3) |
-| `src/rag/config.py` | Modify | Add `descriptions: dict[str, str] = {}` to `FoldersConfig` (§7.4) |
-| `src/rag/types.py` | Modify | Add `ResearchPromptArgs`, `DiscoverPromptArgs`, `CatchUpPromptArgs` (§8.1) |
 | `tests/test_mcp_prompts.py` | **New** | Prompt unit tests (§9.1) |
 | `tests/test_mcp_tools.py` | Modify | Description content assertions (§9.2) |
 | `tests/test_mcp_server.py` | Modify | Server instructions assertions (§9.3) |
 
+No changes to `src/rag/config.py` or `src/rag/types.py`.
+
 ---
 
-## 11. Build Order
+## 13. Build Order
 
 This is a single-phase change. Recommended implementation order:
 
 1. **Tool descriptions** — Replace strings in `_TOOLS` (§3, §4). Run `make test`. Immediate value, zero risk.
-2. **Server instructions** — Add `_build_server_instructions()` and `FoldersConfig.descriptions` (§5, §7.2, §7.4). Run `make test`.
-3. **MCP prompts** — Create `prompts.py`, add types, register handlers (§6, §7.3, §8.1). Run `make test`.
+2. **Server instructions** — Add `_build_instructions()` to `server.py`, pass `instructions` to `Server()` (§5, §7.2). Run `make test`.
+3. **MCP prompts** — Create `prompts.py`, register handlers (§6, §7.3). Run `make test`.
 4. **E2E validation** — Run `make test-e2e` to verify MCP handshake and prompt round-trip (§9.4).
 
 Steps 1 and 2 deliver ~90% of the value. Step 3 is additive.
