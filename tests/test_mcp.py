@@ -669,3 +669,83 @@ class TestQuickSearch:
 
         call_args = mock_engine.async_search.call_args
         assert call_args.kwargs["filters"].folder_filter == "/docs"
+
+
+# --- Enriched Tool Description Tests (spec §9.2) ---
+
+
+class TestEnrichedToolDescriptions:
+    def test_search_documents_description(self) -> None:
+        """search_documents description contains guidance on query formulation."""
+        tool = next(t for t in _TOOLS if t.name == "search_documents")
+        assert "natural-language" in tool.description
+
+    def test_quick_search_description(self) -> None:
+        """quick_search description explains when NOT to use it."""
+        tool = next(t for t in _TOOLS if t.name == "quick_search")
+        assert "Not suitable" in tool.description
+
+    def test_get_document_context_description(self) -> None:
+        """get_document_context description explains doc_id vs chunk_id."""
+        tool = next(t for t in _TOOLS if t.name == "get_document_context")
+        assert "doc_id" in tool.description
+        assert "chunk_id" in tool.description
+
+    def test_list_recent_documents_description(self) -> None:
+        """list_recent_documents description explains it doesn't search."""
+        tool = next(t for t in _TOOLS if t.name == "list_recent_documents")
+        assert "does not perform any search" in tool.description
+
+    def test_get_sync_status_description(self) -> None:
+        """get_sync_status description explains diagnostic use."""
+        tool = next(t for t in _TOOLS if t.name == "get_sync_status")
+        assert "diagnose" in tool.description
+
+
+class TestEnrichedParameterDescriptions:
+    def test_query_param_mentions_multi_word(self) -> None:
+        """query parameter description mentions multi-word phrases."""
+        tool = next(t for t in _TOOLS if t.name == "search_documents")
+        query_desc = tool.inputSchema["properties"]["query"]["description"]
+        assert "multi-word" in query_desc
+
+    def test_format_param_mentions_get_document_context(self) -> None:
+        """format parameter description mentions follow-up calls."""
+        tool = next(t for t in _TOOLS if t.name == "search_documents")
+        fmt_desc = tool.inputSchema["properties"]["format"]["description"]
+        assert "get_document_context" in fmt_desc
+
+    def test_folder_filter_mentions_absolute_path(self) -> None:
+        """folder_filter parameter description mentions absolute path."""
+        tool = next(t for t in _TOOLS if t.name == "search_documents")
+        folder_desc = tool.inputSchema["properties"]["folder_filter"]["description"]
+        assert "absolute path" in folder_desc.lower()
+
+
+# --- Server Instructions Tests (spec §9.3) ---
+
+
+class TestServerInstructions:
+    def test_instructions_present(self) -> None:
+        """Server created via create_server has instructions set."""
+        config = _make_config()
+        config.folders.paths = ["/docs/work", "/docs/personal"]
+        server = create_server(config)
+        assert server.instructions is not None
+        assert "Recommended Workflow" in server.instructions
+
+    def test_instructions_contain_folder_paths(self) -> None:
+        """Server instructions include configured folder paths."""
+        config = _make_config()
+        config.folders.paths = ["/docs/work", "/docs/personal"]
+        server = create_server(config)
+        assert "/docs/work" in server.instructions
+        assert "/docs/personal" in server.instructions
+
+    def test_instructions_empty_folders(self) -> None:
+        """Server instructions handle no configured folders."""
+        config = _make_config()
+        config.folders.paths = []
+        server = create_server(config)
+        assert server.instructions is not None
+        assert "No folders configured" in server.instructions

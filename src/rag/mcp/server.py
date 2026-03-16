@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from mcp.server import Server
 
+from rag.mcp.prompts import register_prompts
 from rag.mcp.tools import register_tools
 
 if TYPE_CHECKING:
@@ -13,11 +14,59 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_INSTRUCTIONS_TEMPLATE = """\
+local-rag is a local document search system that indexes files (PDF, DOCX, TXT, MD) \
+from configured folders on this machine. It provides hybrid semantic + keyword search \
+with cross-encoder reranking over the indexed collection.
+
+## Indexed Folders
+
+{folders_block}
+
+## Recommended Workflow
+
+1. **Scout** — Start with quick_search or list_recent_documents to understand what \
+documents exist and which are relevant. Use the returned doc_ids for drill-down.
+2. **Search** — Use search_documents with specific natural-language queries to extract \
+cited evidence passages. Prefer multi-word queries with domain terminology.
+3. **Drill down** — Use get_document_context with a doc_id (for full document overview) \
+or chunk_id (for surrounding passage context) to get deeper information.
+
+## Query Tips
+
+- Use 3-8 word natural-language queries, not single keywords.
+- Include domain-specific terms that would appear in the documents.
+- If initial results are weak, try rephrasing with different terminology or synonyms.
+- Use folder_filter when you know which folder contains the target content.
+- Use date_filter on search_documents when the user asks about recent information.
+
+## Important Notes
+
+- This system returns evidence passages, not answers. Synthesize answers from the \
+returned citations.
+- Scores range from 0 to 1. Results above 0.5 are typically strong matches; below 0.3 \
+may be tangential.
+- The detail parameter on summary tools controls verbosity: "8w" for lists, "32w" for \
+overviews, "128w" for deep reading.
+- get_sync_status can verify the index is current before searching.\
+"""
+
+
+def _build_instructions(config: AppConfig) -> str:
+    """Build server instructions with configured folder paths."""
+    if config.folders.paths:
+        folders_block = "\n".join(f"- {p}" for p in config.folders.paths)
+    else:
+        folders_block = "(No folders configured)"
+    return _INSTRUCTIONS_TEMPLATE.format(folders_block=folders_block)
+
 
 def create_server(config: AppConfig) -> Server:
     """Create and configure the MCP server with all tools registered."""
-    server = Server("local-rag")
+    instructions = _build_instructions(config)
+    server = Server("local-rag", instructions=instructions)
     register_tools(server, config)
+    register_prompts(server, config)
     return server
 
 

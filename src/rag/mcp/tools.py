@@ -104,21 +104,45 @@ _TOOLS: list[types.Tool] = [
     types.Tool(
         name="search_documents",
         description=(
-            "Search indexed documents using hybrid dense+keyword retrieval "
-            "with cross-encoder reranking. Returns cited evidence passages."
+            "Search indexed documents using hybrid dense+keyword retrieval with "
+            "cross-encoder reranking. Returns cited evidence passages grouped by "
+            "source document, with section locations and page numbers. Use "
+            "natural-language queries with specific terms from the domain — e.g., "
+            '"quarterly revenue growth methodology" rather than single words like '
+            '"revenue". Use folder_filter to narrow results when you know which '
+            "folder contains the relevant documents. For a broad overview of which "
+            "documents match a topic, use quick_search first, then search_documents "
+            "to extract specific evidence."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Search query text"},
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Natural-language search query. Use specific multi-word phrases "
+                        'rather than single keywords — "employee onboarding process '
+                        'timeline" works better than "onboarding". Include domain-specific '
+                        "terms that would appear in the target documents. The query is used "
+                        "for both semantic (meaning-based) and keyword matching, so exact "
+                        "terminology helps."
+                    ),
+                },
                 "folder_filter": {
                     "type": "string",
-                    "description": "Restrict to a specific folder path",
+                    "description": (
+                        "Restrict results to documents within this folder path. Use an "
+                        'absolute path prefix — e.g., "/Users/you/Documents/Work". '
+                        "Documents in subfolders are included. Omit to search all indexed "
+                        "folders."
+                    ),
                 },
                 "date_filter": {
                     "type": "string",
                     "description": (
-                        "ISO 8601 date; only return docs modified on or after this date"
+                        'ISO 8601 date string (e.g., "2025-01-01"). Only return documents '
+                        "modified on or after this date. Useful for scoping to recent "
+                        'content when the user asks about "recent" or "latest" information.'
                     ),
                 },
                 "top_k": {
@@ -128,15 +152,24 @@ _TOOLS: list[types.Tool] = [
                 },
                 "debug": {
                     "type": "boolean",
-                    "description": "Include timing and debug info in response",
+                    "description": (
+                        "Include retrieval debug info: query classification "
+                        "(broad/specific/navigational), per-lane hit counts, fusion "
+                        "weights, timing breakdown, and reranker scores. Useful for "
+                        "understanding why results are ranked the way they are. Does not "
+                        "change the results themselves."
+                    ),
                     "default": False,
                 },
                 "format": {
                     "type": "string",
                     "enum": ["text", "json"],
                     "description": (
-                        "Output format: 'text' (default) returns LLM-friendly grouped text, "
-                        "'json' returns raw JSON for programmatic use"
+                        "Output format: 'text' (default) returns results grouped by "
+                        "document with summaries, topics, and ranked passages — best for "
+                        "answering questions. 'json' returns raw structured data with "
+                        "scores, doc_ids, and chunk_ids — use this when you need IDs for "
+                        "follow-up calls to get_document_context."
                     ),
                     "default": "text",
                 },
@@ -147,9 +180,14 @@ _TOOLS: list[types.Tool] = [
     types.Tool(
         name="get_document_context",
         description=(
-            "Get context for a document or chunk. "
-            "Provide doc_id for document overview (summary + sections), "
-            "or chunk_id for a chunk with surrounding context window."
+            "Retrieve detailed context for a specific document or chunk. Provide "
+            "doc_id to get a document overview with its summary and all section "
+            "summaries — useful after quick_search identifies a relevant document. "
+            "Provide chunk_id to get a specific passage with surrounding chunks for "
+            "context — useful after search_documents returns a passage you want to "
+            "read more around. The window parameter controls how many adjacent chunks "
+            "to include (default 1, meaning 1 before + 1 after). Always requires "
+            "either doc_id or chunk_id — do not call without one."
         ),
         inputSchema={
             "type": "object",
@@ -173,13 +211,27 @@ _TOOLS: list[types.Tool] = [
     ),
     types.Tool(
         name="list_recent_documents",
-        description="List recently indexed documents, optionally filtered by folder.",
+        description=(
+            "List recently indexed documents sorted by modification date, with "
+            "titles and summaries. Use this to answer \"what's new?\" or \"what "
+            "changed recently?\" questions, or to browse the document collection "
+            "without a specific search query. Use folder_filter to scope to a "
+            'specific folder. The detail parameter controls summary length — use '
+            '"8w" for a quick list, "32w" or "64w" when the user wants to '
+            "understand what each document covers. This tool does not perform any "
+            "search — it simply lists documents by recency."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "folder_filter": {
                     "type": "string",
-                    "description": "Restrict to a specific folder path",
+                    "description": (
+                        "Restrict results to documents within this folder path. Use an "
+                        'absolute path prefix — e.g., "/Users/you/Documents/Work". '
+                        "Documents in subfolders are included. Omit to search all indexed "
+                        "folders."
+                    ),
                 },
                 "limit": {
                     "type": "integer",
@@ -193,8 +245,12 @@ _TOOLS: list[types.Tool] = [
     types.Tool(
         name="get_sync_status",
         description=(
-            "Get the current indexing sync status: total files, indexed, "
-            "pending, errors, per-folder breakdown."
+            "Get the current indexing status: total files tracked, how many are "
+            "indexed, pending, or errored, with a per-folder breakdown. Use this to "
+            "check whether the index is up to date before searching, or to diagnose "
+            "why expected documents are not appearing in search results. Returns "
+            "counts only, not document content — use list_recent_documents or "
+            "search_documents to see actual documents."
         ),
         inputSchema={
             "type": "object",
@@ -204,17 +260,38 @@ _TOOLS: list[types.Tool] = [
     types.Tool(
         name="quick_search",
         description=(
-            "Quick document scan — returns document titles, summaries, and topics "
-            "matching a query. Use this for an overview before drilling into "
-            "specific documents with search_documents."
+            "Quick document-level scan — returns document titles, summaries, and "
+            "topics matching a query, without individual passage extraction. Use "
+            "this as a first step to discover which documents are relevant before "
+            "drilling into specific ones with search_documents. Runs the same "
+            "retrieval pipeline but returns document-level results instead of "
+            'chunk-level evidence. Good for questions like "what documents do we '
+            'have about X?" or "which reports cover Y?". Not suitable when you need '
+            "specific quotes, data points, or cited passages — use search_documents "
+            "for that."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Search query text"},
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Natural-language search query. Use specific multi-word phrases "
+                        'rather than single keywords — "employee onboarding process '
+                        'timeline" works better than "onboarding". Include domain-specific '
+                        "terms that would appear in the target documents. The query is used "
+                        "for both semantic (meaning-based) and keyword matching, so exact "
+                        "terminology helps."
+                    ),
+                },
                 "folder_filter": {
                     "type": "string",
-                    "description": "Restrict to a specific folder path",
+                    "description": (
+                        "Restrict results to documents within this folder path. Use an "
+                        'absolute path prefix — e.g., "/Users/you/Documents/Work". '
+                        "Documents in subfolders are included. Omit to search all indexed "
+                        "folders."
+                    ),
                 },
                 "top_k": {
                     "type": "integer",
