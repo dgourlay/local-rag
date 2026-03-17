@@ -95,7 +95,7 @@ def _make_runner(
     dedup = DedupChecker(conn)
 
     mock_embedder = MagicMock()
-    mock_embedder.embed_batch.return_value = [[0.1, 0.2, 0.3]]
+    mock_embedder.embed_batch.side_effect = lambda texts: [[0.1, 0.2, 0.3]] * len(texts)
     mock_embedder.model_version = "test-model-v1"
 
     mock_vector_store = MagicMock()
@@ -354,8 +354,9 @@ class TestProcessBatch:
         mocks["parser"].parse.side_effect = side_effect_parse
 
         counts = runner.process_batch(events)
-        # Both succeed (one indexed, one may dedup due to same normalized text)
-        assert counts[ProcessingOutcome.INDEXED] + counts[ProcessingOutcome.DUPLICATE] == 2
+        # Both succeed — dedup hash is only registered after successful indexing,
+        # so within a single batch both files get indexed independently
+        assert counts[ProcessingOutcome.INDEXED] == 2
         assert counts[ProcessingOutcome.ERROR] == 0
 
     def test_batch_with_errors(self, tmp_path: Path) -> None:

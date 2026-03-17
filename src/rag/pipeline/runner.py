@@ -253,15 +253,7 @@ class PipelineRunner:
 
             doc_id = parsed_doc.doc_id
 
-            # 5. Register hash for future dedup
-            self._dedup.register_hash(
-                file_path,
-                normalized.raw_content_hash,
-                normalized.normalized_content_hash,
-                doc_id,
-            )
-
-            # 6. Save document metadata
+            # 5. Save document metadata
             self._db.upsert_document(
                 DocumentRow(
                     doc_id=doc_id,
@@ -394,6 +386,14 @@ class PipelineRunner:
 
             # Ensure all async upserts complete before marking file as done
             self._flush_background_upserts()
+
+            # Register dedup hash only after successful indexing
+            self._dedup.register_hash(
+                file_path,
+                normalized.raw_content_hash,
+                normalized.normalized_content_hash,
+                doc_id,
+            )
 
             self._update_sync_status(file_path, "done")
             self._log(doc_id, file_path, "pipeline", "success", start, f"{len(chunks)} chunks")
@@ -641,6 +641,13 @@ class PipelineRunner:
                 doc_vectors = all_vectors[si:ei]
                 try:
                     self._index_parsed_file(pr, doc_vectors, on_status=on_status)
+                    # Register dedup hash only after successful indexing
+                    self._dedup.register_hash(
+                        pr.event.file_path,
+                        pr.normalized.raw_content_hash,
+                        pr.normalized.normalized_content_hash,
+                        pr.parsed_doc.doc_id,
+                    )
                     _report_progress(
                         ProcessingOutcome.INDEXED,
                         f"{len(pr.chunks)} chunks",
@@ -859,13 +866,8 @@ class PipelineRunner:
             self._log(doc_id, file_path, "dedup", "duplicate", pr.start, details)
             return ProcessingOutcome.DUPLICATE, f"duplicate of {canonical_name}"
 
-        # Register hash for future dedup
-        self._dedup.register_hash(
-            file_path,
-            normalized.raw_content_hash,
-            normalized.normalized_content_hash,
-            pr.parsed_doc.doc_id,
-        )
+        # Hash registration deferred to _flush_pending (after successful indexing)
+        # to avoid marking files as canonical before they are fully indexed.
 
         return None
 
