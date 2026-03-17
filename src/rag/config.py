@@ -80,7 +80,7 @@ class SummarizationConfig(BaseModel):
     args: list[str] | None = None
     input_mode: Literal["stdin", "arg"] | None = None
     timeout_seconds: int = 300
-    max_workers: int = Field(default=3, ge=1, le=5)
+    max_concurrent_llm: int = Field(default=3, ge=1, le=4)
 
     @model_validator(mode="after")
     def _apply_preset_defaults(self) -> SummarizationConfig:

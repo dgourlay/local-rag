@@ -576,7 +576,7 @@ class TestSummarizationBatchEmbedding:
         assert mocks["embedder"].embed_batch.call_count == 1
 
     def test_section_failure_does_not_block_others(self, tmp_path: Path) -> None:
-        """If combined fails and one section summary fails in fallback, others still produce points."""
+        """If combined fails and one section is missing in fallback batch, others still produce points."""
         conn = _create_db()
         num_sections = 3
 
@@ -596,22 +596,19 @@ class TestSummarizationBatchEmbedding:
             doc_type_guess="notes",
         )
 
-        call_count = 0
-
-        def section_side_effect(
-            text: str, heading: str | None, doc_context: str,
-        ) -> SectionSummarySuccess | SectionSummaryError:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 2:
-                return SectionSummaryError(error="LLM timeout")
-            return SectionSummarySuccess(
+        # summarize_sections_batch returns only 2 of 3 sections (one failed in batch)
+        mock_summarizer.summarize_sections_batch.return_value = [
+            CombinedSectionSummary(
                 section_summary_8w="Short",
-                section_summary_32w=f"Summary for call {call_count}",
-                section_summary_128w=f"Detailed summary for call {call_count}",
-            )
-
-        mock_summarizer.summarize_section.side_effect = section_side_effect
+                section_summary_32w="Summary for section 0",
+                section_summary_128w="Detailed summary of Section 0",
+            ),
+            CombinedSectionSummary(
+                section_summary_8w="Short",
+                section_summary_32w="Summary for section 2",
+                section_summary_128w="Detailed summary of Section 2",
+            ),
+        ]
 
         runner, mocks = _make_runner_with_summarizer(
             tmp_path, conn, summarizer=mock_summarizer, num_sections=num_sections
@@ -626,7 +623,7 @@ class TestSummarizationBatchEmbedding:
         assert len(summary_texts) == 3, f"Expected 3 summary texts, got {len(summary_texts)}"
 
     def test_section_exception_does_not_block_others(self, tmp_path: Path) -> None:
-        """If combined fails and a section raises in fallback, other sections still complete."""
+        """If combined fails and batch returns partial results, other sections still complete."""
         conn = _create_db()
         num_sections = 3
 
@@ -645,23 +642,19 @@ class TestSummarizationBatchEmbedding:
             doc_type_guess="notes",
         )
 
-        call_count = 0
-
-        def section_side_effect(
-            text: str, heading: str | None, doc_context: str,
-        ) -> SectionSummarySuccess | SectionSummaryError:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 2:
-                msg = "Subprocess crashed"
-                raise RuntimeError(msg)
-            return SectionSummarySuccess(
+        # summarize_sections_batch returns only 2 of 3 sections
+        mock_summarizer.summarize_sections_batch.return_value = [
+            CombinedSectionSummary(
                 section_summary_8w="Short",
-                section_summary_32w=f"Summary for call {call_count}",
-                section_summary_128w=f"Detailed summary for call {call_count}",
-            )
-
-        mock_summarizer.summarize_section.side_effect = section_side_effect
+                section_summary_32w="Summary for section 0",
+                section_summary_128w="Detailed summary of Section 0",
+            ),
+            CombinedSectionSummary(
+                section_summary_8w="Short",
+                section_summary_32w="Summary for section 2",
+                section_summary_128w="Detailed summary of Section 2",
+            ),
+        ]
 
         runner, mocks = _make_runner_with_summarizer(
             tmp_path, conn, summarizer=mock_summarizer, num_sections=num_sections
@@ -688,11 +681,14 @@ class TestSummarizationBatchEmbedding:
             error="combined failed"
         )
         mock_summarizer.summarize_document.return_value = SummaryError(error="timeout")
-        mock_summarizer.summarize_section.return_value = SectionSummarySuccess(
-            section_summary_8w="Short",
-            section_summary_32w="Section summary.",
-            section_summary_128w="Detailed section summary.",
-        )
+        mock_summarizer.summarize_sections_batch.return_value = [
+            CombinedSectionSummary(
+                section_summary_8w="Short",
+                section_summary_32w="Section summary.",
+                section_summary_128w="Detailed section summary.",
+            )
+            for _ in range(num_sections)
+        ]
 
         runner, mocks = _make_runner_with_summarizer(
             tmp_path, conn, summarizer=mock_summarizer, num_sections=num_sections
@@ -748,28 +744,28 @@ class TestSummarizationBatchEmbedding:
             assert summary_texts[i + 1] == f"Detailed summary of Section {i}"
 
 
-class TestMaxWorkersConfig:
-    """Tests for max_workers config validation."""
+class TestMaxConcurrentLlmConfig:
+    """Tests for max_concurrent_llm config validation."""
 
-    def test_default_max_workers(self) -> None:
+    def test_default_max_concurrent_llm(self) -> None:
         config = SummarizationConfig()
-        assert config.max_workers == 3
+        assert config.max_concurrent_llm == 3
 
-    def test_max_workers_min_valid(self) -> None:
-        config = SummarizationConfig(max_workers=1)
-        assert config.max_workers == 1
+    def test_max_concurrent_llm_min_valid(self) -> None:
+        config = SummarizationConfig(max_concurrent_llm=1)
+        assert config.max_concurrent_llm == 1
 
-    def test_max_workers_max_valid(self) -> None:
-        config = SummarizationConfig(max_workers=5)
-        assert config.max_workers == 5
+    def test_max_concurrent_llm_max_valid(self) -> None:
+        config = SummarizationConfig(max_concurrent_llm=4)
+        assert config.max_concurrent_llm == 4
 
-    def test_max_workers_below_min_raises(self) -> None:
+    def test_max_concurrent_llm_below_min_raises(self) -> None:
         with pytest.raises(Exception):  # noqa: B017
-            SummarizationConfig(max_workers=0)
+            SummarizationConfig(max_concurrent_llm=0)
 
-    def test_max_workers_above_max_raises(self) -> None:
+    def test_max_concurrent_llm_above_max_raises(self) -> None:
         with pytest.raises(Exception):  # noqa: B017
-            SummarizationConfig(max_workers=6)
+            SummarizationConfig(max_concurrent_llm=5)
 
 
 class TestPipelineParallelism:

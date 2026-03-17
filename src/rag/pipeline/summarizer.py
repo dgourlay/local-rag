@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
 from rag.results import (
@@ -340,11 +341,17 @@ def _extract_json(text: str) -> dict[str, object] | None:
 
 
 class CliSummarizer:
-    """Summarizer that shells out to a configured LLM CLI tool."""
+    """Summarizer that shells out to a configured LLM CLI tool.
+
+    Owns a shared ThreadPoolExecutor sized to ``max_concurrent_llm`` (1-4)
+    so that all LLM CLI calls (questions, doc summaries, section summaries)
+    are throttled to a safe concurrency level.
+    """
 
     def __init__(self, config: SummarizationConfig) -> None:
         self._config = config
         self._available: bool | None = None
+        self._pool = ThreadPoolExecutor(max_workers=config.max_concurrent_llm)
 
     @property
     def available(self) -> bool:
@@ -499,16 +506,30 @@ class CliSummarizer:
             return []
 
         batches = self._group_sections_into_batches(sections)
-        all_results: list[CombinedSectionSummary] = []
+        # Maintain insertion order: collect results per batch index
+        batch_results: dict[int, list[CombinedSectionSummary]] = {}
 
-        for batch in batches:
+        def _run_section_batch(batch: list[tuple[str | None, str]]) -> str | None:
             sections_text = _format_sections_text(batch)
             prompt = BATCH_SECTION_PROMPT_TEMPLATE.format(
                 doc_context=doc_context,
                 sections_text=sections_text,
             )
+            return self._run_cli(prompt)
 
-            stdout = self._run_cli(prompt)
+        futures = {
+            self._pool.submit(_run_section_batch, batch): idx
+            for idx, batch in enumerate(batches)
+        }
+
+        for future in as_completed(futures):
+            batch_idx = futures[future]
+            try:
+                stdout = future.result()
+            except Exception:
+                logger.warning("Batch section summarization raised an exception", exc_info=True)
+                continue
+
             if stdout is None:
                 logger.warning("Batch section summarization CLI call failed")
                 continue
@@ -523,12 +544,19 @@ class CliSummarizer:
                 logger.warning("Batch section output missing 'sections' array")
                 continue
 
+            results: list[CombinedSectionSummary] = []
             for raw_sec in raw_sections:
                 if isinstance(raw_sec, dict):
                     try:
-                        all_results.append(CombinedSectionSummary.model_validate(raw_sec))
+                        results.append(CombinedSectionSummary.model_validate(raw_sec))
                     except Exception:
                         logger.warning("Failed to validate section summary in batch")
+            batch_results[batch_idx] = results
+
+        # Reassemble in original batch order
+        all_results: list[CombinedSectionSummary] = []
+        for idx in range(len(batches)):
+            all_results.extend(batch_results.get(idx, []))
 
         return all_results
 
@@ -578,14 +606,24 @@ class CliSummarizer:
         # Build a lookup from chunk_order to chunk for assignment
         chunk_by_order: dict[int, Chunk] = {c.chunk_order: c for c in chunks}
 
-        for batch in batches:
+        def _run_one_batch(batch: list[Chunk]) -> str | None:
             chunks_text = _format_chunks_text(batch)
             prompt = CHUNK_QUESTIONS_BATCH_PROMPT_TEMPLATE.format(
                 title=title or "Untitled",
                 chunks_text=chunks_text,
             )
+            return self._run_cli(prompt)
 
-            stdout = self._run_cli(prompt)
+        # Submit all batches to the shared pool in parallel
+        futures = {self._pool.submit(_run_one_batch, batch): batch for batch in batches}
+
+        for future in as_completed(futures):
+            try:
+                stdout = future.result()
+            except Exception:
+                logger.warning("Batch question generation raised an exception", exc_info=True)
+                continue
+
             if stdout is None:
                 logger.warning("Batch question generation CLI call failed")
                 continue
@@ -610,7 +648,6 @@ class CliSummarizer:
                     and isinstance(questions, list)
                     and order in chunk_by_order
                 ):
-                    # Validate all questions are strings
                     valid_questions = [q for q in questions if isinstance(q, str)]
                     if valid_questions:
                         chunk_by_order[order].generated_questions = valid_questions

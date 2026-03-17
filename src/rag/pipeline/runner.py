@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1150,50 +1150,37 @@ class PipelineRunner:
         else:
             logger.warning("Document summarization failed for %s: %s", file_path, doc_result.error)
 
-        # Parallel section summaries
+        # Parallel section summaries (uses summarizer's shared LLM pool)
         doc_context = f"{title} ({normalized.file_type.value})"
         section_results: list[tuple[SectionSummarySuccess, SectionRow, int]] = []
-        max_workers = self._config.summarization.max_workers
 
-        def _summarize_one_section(
-            section_text: str, heading: str | None, context: str,
-        ) -> SectionSummarySuccess | None:
-            result = self._summarizer.summarize_section(section_text, heading, context)  # type: ignore[union-attr]
-            if isinstance(result, SectionSummarySuccess):
-                return result
-            return None
+        sections_for_batch: list[tuple[str | None, str]] = [
+            (section.heading, section.text)  # type: ignore[union-attr]
+            for section, _row in section_pairs
+        ]
+        batch_results = self._summarizer.summarize_sections_batch(  # type: ignore[union-attr]
+            sections_for_batch, doc_context,
+        )
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_idx = {
-                executor.submit(
-                    _summarize_one_section, section.text, section.heading, doc_context,  # type: ignore[union-attr]
-                ): i
-                for i, (section, _section_row) in enumerate(section_pairs)
-            }
-            for future in as_completed(future_to_idx):
-                idx = future_to_idx[future]
-                section, section_row = section_pairs[idx]
-                try:
-                    sec_result = future.result()
-                except Exception:
-                    logger.exception(
-                        "Section summarization raised for %s section %d",
-                        file_path,
-                        idx,
-                    )
-                    continue
-
-                if sec_result is not None:
-                    updated_section = section_row.model_copy(
-                        update={
-                            "section_summary_8w": sec_result.section_summary_8w,
-                            "section_summary_32w": sec_result.section_summary_32w,
-                            "section_summary_128w": sec_result.section_summary_128w,
-                            "embedding_model_version": self._embedder.model_version,
-                        }
-                    )
-                    self._db.insert_sections([updated_section])
-                    section_results.append((sec_result, section_row, idx))
+        for i, sec_summary in enumerate(batch_results):
+            if i >= len(section_pairs):
+                break
+            _section, section_row = section_pairs[i]
+            sec_result = SectionSummarySuccess(
+                section_summary_8w=sec_summary.section_summary_8w,
+                section_summary_32w=sec_summary.section_summary_32w,
+                section_summary_128w=sec_summary.section_summary_128w,
+            )
+            updated_section = section_row.model_copy(
+                update={
+                    "section_summary_8w": sec_result.section_summary_8w,
+                    "section_summary_32w": sec_result.section_summary_32w,
+                    "section_summary_128w": sec_result.section_summary_128w,
+                    "embedding_model_version": self._embedder.model_version,
+                }
+            )
+            self._db.insert_sections([updated_section])
+            section_results.append((sec_result, section_row, i))
 
         return self._build_summary_points(
             doc_id, title, file_path, folder_path, folder_ancestors,
