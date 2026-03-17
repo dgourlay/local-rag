@@ -79,7 +79,7 @@ Features implemented and tested as of this date:
 | Semantic chunking | ✅ | Max-Min algorithm (they pioneered this in the MCP RAG space) |
 | Keyword boost | ✅ | Boosts exact matches in semantic results |
 | Relevance gap grouping | ✅ | Adaptive result count via statistical gaps |
-| Agent skills | ✅ | Prompt instructions for query formulation |
+| Agent skills / query guidance | ✅ | Prompt instructions for query formulation (we match this via server instructions + MCP prompts) |
 | HTML/web ingestion | ✅ | Readability.js extraction |
 | Cross-encoder reranker | ❌ | Author acknowledges this limits accuracy |
 | Multi-lane retrieval | ❌ | Single semantic lane + keyword boost |
@@ -94,7 +94,7 @@ Features implemented and tested as of this date:
 | OCR | ❌ | — |
 | Progressive disclosure | ❌ | — |
 
-**What they have that we don't:** Relevance gap grouping, agent skills as installable files, HTML/web ingestion, zero-setup (no Docker/Python).
+**What they have that we don't:** Relevance gap grouping, HTML/web ingestion, zero-setup (no Docker/Python). (Their "agent skills" are matched by our server instructions + MCP prompts — ours are richer with ~600w workflow guidance + 3 slash-command prompts.)
 
 ---
 
@@ -232,7 +232,7 @@ Features implemented and tested as of this date:
 | **Progressive disclosure** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Filesystem watching** | ✅ | ❌ | ❌ | connectors | ❌ | ❌ |
 | **OCR** | ✅ native macOS | ❌ | ❌ | ✅ deep | ❌ | ❌ |
-| **Server instructions** | ✅ ~600w | ✅ skills | ❌ | ❌ | ❌ | ❌ |
+| **Server instructions + prompts** | ✅ ~600w + 3 prompts | ✅ skills | ❌ | ❌ | ❌ | ❌ |
 | **Parallel LLM pipeline** | ✅ cross-file | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Setup complexity** | pip+Docker | npx zero | installer | Docker 2-9GB | pip/Docker | Docker |
 | **GUI** | CLI+MCP | MCP only | ✅ full | ✅ full | ✅ web | basic |
@@ -248,7 +248,6 @@ Features implemented and tested as of this date:
 | Gap | Source | Impact | Effort |
 |-----|--------|--------|--------|
 | **Relevance gap grouping** | shinpr | High — adaptive result count beats fixed top-K | Low (~30 lines) |
-| **Agent skills as installable files** | shinpr | Medium — structured query guidance beyond server instructions | Low (docs only) |
 | **HTML/web content ingestion** | shinpr, AnythingLLM | Medium — developers reference web docs alongside local files | Medium |
 | **Visual chunking inspection** | RAGFlow | Medium — critical for debugging RAG quality | Low-Med (CLI `rag inspect`) |
 | **Parent-child chunk expansion** | RAGFlow | Low-Med — partial coverage via citation expansion already | Low-Med |
@@ -306,15 +305,14 @@ These are **uncontested differentiators**:
 
 ### Quick wins (this sprint)
 1. **Relevance gap grouping** — Add `adaptive_k: true` parameter to search_documents. ~30 lines of statistics on the final ranked list. Closes the one retrieval feature gap vs shinpr.
-2. **Agent skills** — Package query formulation guidance as installable `.claude/skills/` files. Pure markdown, zero code. Matches shinpr's skill system.
 
 ### Near-term (next release)
-3. **`rag inspect` command** — CLI chunking inspection showing parsed sections, chunk boundaries, token counts, summaries. Data already in SQLite — just needs a presentation layer.
-4. **HTML/web ingestion** — `rag add-url <url>` using `trafilatura` or `readability-lxml`. Feeds into existing pipeline. Matches shinpr + AnythingLLM.
+2. **`rag inspect` command** — CLI chunking inspection showing parsed sections, chunk boundaries, token counts, summaries. Data already in SQLite — just needs a presentation layer.
+3. **HTML/web ingestion** — `rag add-url <url>` using `trafilatura` or `readability-lxml`. Feeds into existing pipeline. Matches shinpr + AnythingLLM.
 
 ### Strategic
-5. **Embedded vector store option** — Offer LanceDB or SQLite-vec as a Qdrant alternative for zero-Docker setup. This is the single biggest competitive weakness vs shinpr's one-command install.
-6. **Publish retrieval quality benchmarks** — Create reproducible test with known documents + queries. Show precision/recall vs basic cosine search. Make the sophistication gap visible and measurable.
+4. **Embedded vector store option** — Offer LanceDB or SQLite-vec as a Qdrant alternative for zero-Docker setup. This is the single biggest competitive weakness vs shinpr's one-command install.
+5. **Publish retrieval quality benchmarks** — Create reproducible test with known documents + queries. Show precision/recall vs basic cosine search. Make the sophistication gap visible and measurable.
 
 ---
 
