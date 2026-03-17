@@ -666,6 +666,19 @@ class PipelineRunner:
             pending = []
             pending_chunk_count = 0
 
+        # -- In-flight question generation cap --
+        # Keep the LLM pool fed without unbounded queue buildup.
+        max_in_flight = self._config.summarization.max_concurrent_llm + 2
+
+        def _wait_for_in_flight_room() -> None:
+            """Block until in_flight_questions drops below max_in_flight."""
+            while len(in_flight_questions) >= max_in_flight:
+                # Brief sleep to avoid busy-waiting, then sweep completed futures
+                time.sleep(0.05)
+                _collect_completed_questions()
+                if pending_chunk_count >= batch_size:
+                    _flush_pending()
+
         # -- Main consumer loop --
         while True:
             # Collect any completed question-generation futures
@@ -683,12 +696,10 @@ class PipelineRunner:
                 _flush_pending()
                 break
 
-            # Report start on the consumer thread so output stays sequential
-            if on_start:
-                on_start(item.file_index, total, Path(item.event.file_path).name)
-
             # Parse error or deletion -- handle on main thread
             if isinstance(item, _ParseErrorResult):
+                if on_start:
+                    on_start(item.file_index, total, Path(item.event.file_path).name)
                 if item.error_msg == "__deleted__":
                     self._handle_deletion(item.event)
                     _report_progress(
@@ -719,12 +730,22 @@ class PipelineRunner:
             pr = item
             dedup_result = self._run_dedup_check(pr)
             if dedup_result is not None:
+                # Report start + immediate completion for duplicates/skips
+                if on_start:
+                    on_start(pr.file_index, total, Path(pr.event.file_path).name)
                 outcome, detail = dedup_result
                 _report_progress(outcome, detail, pr.event.file_path, pr.file_index)
                 # Flush dedup hashes periodically
                 if processed_count % 10 == 0:
                     self._dedup.flush()
                 continue
+
+            # Back-pressure: wait if too many files are in-flight for question generation
+            _wait_for_in_flight_room()
+
+            # Report start only for files that will actually be processed
+            if on_start:
+                on_start(pr.file_index, total, Path(pr.event.file_path).name)
 
             # Submit question generation to the summarizer's shared pool (non-blocking)
             if _cli_summarizer is not None:
