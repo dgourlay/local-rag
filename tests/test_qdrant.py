@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from qdrant_client import QdrantClient
 
 from rag.db.qdrant import QdrantVectorStore
@@ -260,6 +261,115 @@ class TestFilterQueries:
         )
         assert len(results) == 1
         assert results[0].payload["folder_path"] == "/research"
+
+
+class TestDateFilter:
+    """Test date_filter on dense and keyword queries."""
+
+    def _make_store_with_dates(self) -> QdrantVectorStore:
+        store = _make_store()
+        v_recent = [0.0] * 1024
+        v_recent[0] = 1.0
+        v_old = [0.0] * 1024
+        v_old[0] = 0.9
+        v_old[1] = 0.1
+        store.upsert_points(
+            "doc-recent",
+            [
+                VectorPoint(
+                    point_id=str(uuid.uuid4()),
+                    vector=v_recent,
+                    payload=QdrantPayloadModel(
+                        record_type=RecordType.CHUNK,
+                        doc_id="doc-recent",
+                        title="Recent Doc",
+                        file_path="/docs/recent.pdf",
+                        folder_path="/docs",
+                        folder_ancestors=["/docs"],
+                        file_type=FileType.PDF,
+                        modified_at="2026-03-15T10:00:00+00:00",
+                        text="recent quarterly business review",
+                    ),
+                ),
+            ],
+        )
+        store.upsert_points(
+            "doc-old",
+            [
+                VectorPoint(
+                    point_id=str(uuid.uuid4()),
+                    vector=v_old,
+                    payload=QdrantPayloadModel(
+                        record_type=RecordType.CHUNK,
+                        doc_id="doc-old",
+                        title="Old Doc",
+                        file_path="/docs/old.pdf",
+                        folder_path="/docs",
+                        folder_ancestors=["/docs"],
+                        file_type=FileType.PDF,
+                        modified_at="2025-06-01T10:00:00+00:00",
+                        text="old quarterly business review",
+                    ),
+                ),
+            ],
+        )
+        return store
+
+    def test_date_filter_full_iso(self) -> None:
+        store = self._make_store_with_dates()
+        results = store.query_dense(
+            vector=[1.0] + [0.0] * 1023,
+            filters=SearchFilters(date_filter="2026-01-01T00:00:00+00:00"),
+            limit=10,
+        )
+        assert len(results) == 1
+        assert results[0].doc_id == "doc-recent"
+
+    def test_date_filter_bare_date(self) -> None:
+        store = self._make_store_with_dates()
+        results = store.query_dense(
+            vector=[1.0] + [0.0] * 1023,
+            filters=SearchFilters(date_filter="2026-01-01"),
+            limit=10,
+        )
+        assert len(results) == 1
+        assert results[0].doc_id == "doc-recent"
+
+    def test_date_filter_includes_all_when_old_enough(self) -> None:
+        store = self._make_store_with_dates()
+        results = store.query_dense(
+            vector=[1.0] + [0.0] * 1023,
+            filters=SearchFilters(date_filter="2025-01-01"),
+            limit=10,
+        )
+        assert len(results) == 2
+
+    def test_date_filter_excludes_all_when_future(self) -> None:
+        store = self._make_store_with_dates()
+        results = store.query_dense(
+            vector=[1.0] + [0.0] * 1023,
+            filters=SearchFilters(date_filter="2027-01-01"),
+            limit=10,
+        )
+        assert len(results) == 0
+
+    def test_date_filter_keyword_search(self) -> None:
+        store = self._make_store_with_dates()
+        results = store.query_keyword(
+            query="quarterly",
+            filters=SearchFilters(date_filter="2026-01-01"),
+            limit=10,
+        )
+        assert len(results) == 1
+        assert results[0].doc_id == "doc-recent"
+
+
+    def test_date_filter_rejects_numeric_range(self) -> None:
+        """Regression: models.Range rejects string dates, DatetimeRange is required."""
+        from qdrant_client import models as qdrant_models
+
+        with pytest.raises(Exception, match="valid number"):
+            qdrant_models.Range(gte="2026-01-01T00:00:00+00:00")
 
 
 class TestEmptyResults:
