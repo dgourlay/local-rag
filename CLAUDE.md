@@ -4,6 +4,18 @@
 
 Local RAG system that indexes documents from configured filesystem folders, builds a hybrid search index (dense vectors + keyword), and exposes retrieval via MCP to local LLM tools (Claude Desktop, Claude Code). Single Python process + Qdrant Docker container. No cloud infrastructure required.
 
+## Quality Checks
+
+Always run the full test suite (`pytest`) and lint/type checks (`ruff check`, `mypy`) after any code changes before committing. All tests must pass and lint must be clean.
+
+## Prerequisites / Pre-flight Checks
+
+Before running searches or indexing commands, verify that Docker and Qdrant are running (`docker ps | grep qdrant`). If infrastructure is down, inform the user immediately rather than retrying.
+
+## Workflow Conventions
+
+When editing code, always re-read the file after editing to confirm changes stuck. Do not assume edits were applied successfully, especially during multi-file changes.
+
 ## Plans
 
 - Spec: `plan/local/local-rag-spec.md`
@@ -20,6 +32,8 @@ Single Python process handles: filesystem watching (watchdog) → Docling parsin
 - Python 3.11+, Pydantic v2, SQLite (WAL mode), Qdrant v1.17 (Docker)
 - Docling (parsing, OcrAutoOptions), sentence-transformers/BGE-M3 (embeddings), onnxruntime (reranker)
 - MCP SDK `mcp>=1.25,<2` (stdio + Streamable HTTP transport)
+
+This project is primarily Python. Use Pydantic models for data types. The project uses ruff for linting, mypy for type checking, and pytest for tests. Do not use spaCy (incompatible with Python 3.14) — use custom sentencizer instead.
 
 ## Typing & Code Quality (Mandatory)
 
@@ -110,3 +124,4 @@ rag mcp-config --print            # Print MCP config JSON snippet
 - `make test-e2e` — end-to-end with real Qdrant Docker, real BGE-M3 model, real `claude` CLI for summarization, real MCP server subprocess
 - E2e tests use fixture documents with known query-answer pairs — asserts on specific content, not just "something returned"
 - `make test-e2e` passing = system works. No ambiguity.
+- When fixing tests, be careful with patch paths — always verify the import path used in the module under test, not the original definition path. After fixing lint, re-run to confirm no new unused import warnings were introduced.
