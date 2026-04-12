@@ -33,6 +33,8 @@ class DatabaseConfig(BaseModel):
 class QdrantConfig(BaseModel):
     url: str = "http://localhost:6333"
     collection: str = "documents"
+    grpc_port: int = 6334
+    prefer_grpc: bool = True
 
 
 class EmbeddingConfig(BaseModel):

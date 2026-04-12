@@ -95,7 +95,12 @@ class QdrantVectorStore:
     """Sync Qdrant vector store implementing the VectorStore protocol."""
 
     def __init__(self, config: QdrantConfig) -> None:
-        self._client = QdrantClient(url=config.url)
+        self._client = QdrantClient(
+            url=config.url,
+            grpc_port=config.grpc_port,
+            prefer_grpc=config.prefer_grpc,
+            check_compatibility=False,
+        )
         self._collection = config.collection
 
     @classmethod
@@ -295,7 +300,12 @@ class AsyncQdrantVectorStore:
     """Async Qdrant vector store for MCP handlers."""
 
     def __init__(self, config: QdrantConfig) -> None:
-        self._client = AsyncQdrantClient(url=config.url)
+        self._client = AsyncQdrantClient(
+            url=config.url,
+            grpc_port=config.grpc_port,
+            prefer_grpc=config.prefer_grpc,
+            check_compatibility=False,
+        )
         self._collection = config.collection
 
     @classmethod

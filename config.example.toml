@@ -13,8 +13,10 @@ paths = ["~/Documents", "~/Work"]
 # path = "~/.local/share/local-rag/metadata.db"
 
 # [qdrant]
-# url = "http://localhost:6333"
+# url = "http://localhost:6333"      # REST endpoint
 # collection = "documents"
+# grpc_port = 6334                   # gRPC endpoint (faster than REST for searches)
+# prefer_grpc = true                 # use gRPC for data operations
 
 # [embedding]
 # model = "BAAI/bge-m3"
