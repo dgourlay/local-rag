@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -460,3 +462,64 @@ class TestRetrievalEngine:
 
         assert isinstance(result, RetrievalResult)
         embedder.embed_query.assert_called_once()
+
+    def test_search_timing_log_always_emitted(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Every search() call emits a structured timing INFO line.
+
+        The line must include total_ms, hyde_ms, embed_ms, prefetch_ms,
+        rerank_ms, cite_ms, results, and classification — even when debug=False.
+        """
+        engine, vs, embedder, reranker, citations = self._build_engine()
+        self._setup_mocks(vs, embedder, reranker, citations)
+        # Return two cited results so `results=2` shows up in the log line.
+        hit = _make_hit("r1")
+        citations.assemble_citations.return_value = [_make_cited(hit), _make_cited(hit)]
+
+        with caplog.at_level(logging.INFO, logger="rag.retrieval.engine"):
+            engine.search("what is this", debug=False)
+
+        timing_records = [r for r in caplog.records if r.getMessage().startswith("search_timing ")]
+        assert len(timing_records) == 1, (
+            f"expected exactly one search_timing line, got {len(timing_records)}: "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+
+        msg = timing_records[0].getMessage()
+        # All expected fields present.
+        for field in (
+            "total_ms=",
+            "hyde_ms=",
+            "embed_ms=",
+            "prefetch_ms=",
+            "rerank_ms=",
+            "cite_ms=",
+            "results=2",
+            "classification=broad",
+        ):
+            assert field in msg, f"missing {field!r} in log line: {msg!r}"
+
+        # Values for *_ms fields are floats with one decimal.
+        for ms_field in ("total_ms", "hyde_ms", "embed_ms", "prefetch_ms", "rerank_ms", "cite_ms"):
+            match = re.search(rf"{ms_field}=(\d+\.\d)", msg)
+            assert match is not None, f"{ms_field} value not formatted as float: {msg!r}"
+
+    def test_search_timing_log_emitted_in_debug_mode(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The always-on timing log is also emitted when debug=True (no regression)."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+        self._setup_mocks(vs, embedder, reranker, citations)
+
+        with caplog.at_level(logging.INFO, logger="rag.retrieval.engine"):
+            result = engine.search("test query", debug=True)
+
+        # Debug info still populated.
+        assert result.debug_info is not None
+        assert "cite_ms" in result.debug_info
+        assert "hyde_ms" in result.debug_info
+
+        # Timing log still emitted.
+        timing_lines = [
+            r.getMessage() for r in caplog.records if r.getMessage().startswith("search_timing ")
+        ]
+        assert len(timing_lines) == 1

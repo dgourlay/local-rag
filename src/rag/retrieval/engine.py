@@ -172,7 +172,13 @@ class RetrievalEngine:
         top_k: int | None = None,
         debug: bool = False,
     ) -> RetrievalResult:
-        """Synchronous multi-stage retrieval."""
+        """Synchronous multi-stage retrieval.
+
+        Always emits a single structured INFO log line per call with per-stage
+        wall-clock timings (``search_timing ...``). When ``debug=True`` the same
+        timings (as ints) plus extra diagnostic fields are also returned via
+        ``RetrievalResult.debug_info``.
+        """
         start = time.monotonic()
         effective_filters = filters or SearchFilters()
         effective_top_k = top_k or self._top_k_final
@@ -192,14 +198,24 @@ class RetrievalEngine:
             )
 
         # 2. Embed query (with optional HyDE for broad queries)
-        t0 = time.monotonic()
-        hyde_vector = self._maybe_apply_hyde(query, analysis.classification)
-        hyde_applied = hyde_vector is not None
+        #
+        # HyDE timing is measured inside _maybe_apply_hyde via an out-dict so we
+        # can report the LLM-CLI cost separately from the raw embedder cost.
+        hyde_meta: dict[str, float | bool] = {"hyde_ms": 0.0, "hyde_applied": False}
+        t_embed_start = time.monotonic()
+        hyde_vector = self._maybe_apply_hyde(query, analysis.classification, hyde_meta)
+        hyde_applied = bool(hyde_meta["hyde_applied"])
         query_vector: list[float] = (
             hyde_vector if hyde_vector is not None else self._embedder.embed_query(query)
         )
+        # embed_ms is the pure embedding cost: total time minus the HyDE LLM cost.
+        embed_ms = (time.monotonic() - t_embed_start) * 1000 - float(hyde_meta["hyde_ms"])
+        if embed_ms < 0:
+            embed_ms = 0.0
+        hyde_ms = float(hyde_meta["hyde_ms"])
         if debug:
-            debug_info["embed_ms"] = int((time.monotonic() - t0) * 1000)
+            debug_info["embed_ms"] = int(embed_ms)
+            debug_info["hyde_ms"] = int(hyde_ms)
             debug_info["hyde_applied"] = hyde_applied
 
         # 3-4. Parallel prefetch: 3 dense lanes + keyword search
@@ -207,19 +223,30 @@ class RetrievalEngine:
         with ThreadPoolExecutor(max_workers=4) as executor:
             fut_doc_summaries = executor.submit(
                 self._vector_store.query_dense,
-                query_vector, effective_filters, 20, RecordType.DOCUMENT_SUMMARY,
+                query_vector,
+                effective_filters,
+                20,
+                RecordType.DOCUMENT_SUMMARY,
             )
             fut_section_summaries = executor.submit(
                 self._vector_store.query_dense,
-                query_vector, effective_filters, 20, RecordType.SECTION_SUMMARY,
+                query_vector,
+                effective_filters,
+                20,
+                RecordType.SECTION_SUMMARY,
             )
             fut_chunks = executor.submit(
                 self._vector_store.query_dense,
-                query_vector, effective_filters, 30, RecordType.CHUNK,
+                query_vector,
+                effective_filters,
+                30,
+                RecordType.CHUNK,
             )
             fut_keyword = executor.submit(
                 self._vector_store.query_keyword,
-                query, effective_filters, self._top_k_candidates,
+                query,
+                effective_filters,
+                self._top_k_candidates,
             )
 
             dense_doc_summaries = fut_doc_summaries.result()
@@ -227,9 +254,9 @@ class RetrievalEngine:
             dense_chunks = fut_chunks.result()
             keyword_hits = fut_keyword.result()
 
-        prefetch_wall_ms = int((time.monotonic() - t0) * 1000)
+        prefetch_ms = (time.monotonic() - t0) * 1000
         if debug:
-            debug_info["prefetch_ms"] = prefetch_wall_ms
+            debug_info["prefetch_ms"] = int(prefetch_ms)
             debug_info["dense_doc_summary_count"] = len(dense_doc_summaries)
             debug_info["dense_section_summary_count"] = len(dense_section_summaries)
             debug_info["dense_chunk_count"] = len(dense_chunks)
@@ -239,9 +266,14 @@ class RetrievalEngine:
             debug_info["keyword_count"] = len(keyword_hits)
 
         # 5. RRF fusion (4 independent ranked lists)
-        fused = rrf_fuse([
-            dense_doc_summaries, dense_section_summaries, dense_chunks, keyword_hits,
-        ])
+        fused = rrf_fuse(
+            [
+                dense_doc_summaries,
+                dense_section_summaries,
+                dense_chunks,
+                keyword_hits,
+            ]
+        )
         if debug:
             debug_info["fused_count"] = len(fused)
 
@@ -259,17 +291,38 @@ class RetrievalEngine:
 
         # 8. Rerank
         t0 = time.monotonic()
-        reranked = self._reranker.rerank(
-            query, boosted[: self._top_k_candidates], effective_top_k
-        )
+        reranked = self._reranker.rerank(query, boosted[: self._top_k_candidates], effective_top_k)
+        rerank_ms = (time.monotonic() - t0) * 1000
         if debug:
-            debug_info["rerank_ms"] = int((time.monotonic() - t0) * 1000)
+            debug_info["rerank_ms"] = int(rerank_ms)
 
-        # 9. Assemble citations
+        # 9. Assemble citations (N+1 SQLite reads — worth timing)
+        t0 = time.monotonic()
         cited = self._citations.assemble_citations(reranked)
-
+        cite_ms = (time.monotonic() - t0) * 1000
         if debug:
-            debug_info["total_ms"] = int((time.monotonic() - start) * 1000)
+            debug_info["cite_ms"] = int(cite_ms)
+
+        total_ms = (time.monotonic() - start) * 1000
+        if debug:
+            debug_info["total_ms"] = int(total_ms)
+
+        # Always-on structured timing log line. One line, grep-friendly, INFO
+        # level. Goes to the root logger via stderr in stdio-mode MCP servers —
+        # never to stdout (which would corrupt JSON-RPC framing).
+        logger.info(
+            "search_timing total_ms=%.1f hyde_ms=%.1f embed_ms=%.1f "
+            "prefetch_ms=%.1f rerank_ms=%.1f cite_ms=%.1f "
+            "results=%d classification=%s",
+            round(total_ms, 1),
+            round(hyde_ms, 1),
+            round(embed_ms, 1),
+            round(prefetch_ms, 1),
+            round(rerank_ms, 1),
+            round(cite_ms, 1),
+            len(cited),
+            analysis.classification,
+        )
 
         return RetrievalResult(
             hits=cited,
@@ -277,8 +330,18 @@ class RetrievalEngine:
             debug_info=debug_info if debug else None,
         )
 
-    def _maybe_apply_hyde(self, query: str, classification: str) -> list[float] | None:
-        """Apply HyDE for broad queries if enabled. Returns embedding or None."""
+    def _maybe_apply_hyde(
+        self,
+        query: str,
+        classification: str,
+        meta: dict[str, float | bool],
+    ) -> list[float] | None:
+        """Apply HyDE for broad queries if enabled. Returns embedding or None.
+
+        Records wall-clock cost and applied flag into ``meta`` for the caller
+        to surface in timing logs. ``meta`` is expected to have keys
+        ``hyde_ms`` and ``hyde_applied``.
+        """
         if classification != "broad":
             return None
         if self._retrieval_config is None or not self._retrieval_config.hyde_enabled:
@@ -288,8 +351,11 @@ class RetrievalEngine:
 
         from rag.retrieval.hyde import hyde_embed
 
+        t0 = time.monotonic()
         result = hyde_embed(query, self._embedder, self._summarization_config)
+        meta["hyde_ms"] = (time.monotonic() - t0) * 1000
         if result is not None:
+            meta["hyde_applied"] = True
             logger.debug("HyDE applied for broad query")
         return result
 
