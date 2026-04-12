@@ -40,7 +40,7 @@ class EmbeddingConfig(BaseModel):
     dimensions: int = 1024
     batch_size: int = 32
     cache_dir: Path = Path("~/.cache/local-rag/models")
-    device: Literal["cpu", "mps", "auto"] = "cpu"
+    device: Literal["cpu", "mps", "auto"] = "auto"
     fp16: bool = True
 
     @model_validator(mode="after")

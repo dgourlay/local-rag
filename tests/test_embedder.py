@@ -17,6 +17,7 @@ def config() -> EmbeddingConfig:
         dimensions=1024,
         batch_size=16,
         cache_dir=Path("/tmp/test-models"),
+        device="cpu",
     )
 
 
@@ -145,11 +146,11 @@ class TestDeviceResolution:
         call_kwargs = mock_cls.call_args
         assert call_kwargs[1]["device"] == "mps"
 
-    def test_device_default_is_cpu(self) -> None:
+    def test_device_default_is_auto(self) -> None:
         config = EmbeddingConfig(
             cache_dir=Path("/tmp/test-models"),
         )
-        assert config.device == "cpu"
+        assert config.device == "auto"
 
 
 class TestFP16Config:
