@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>local-rag vs. qmd — Honest Feature Comparison</title>
+<meta name="description" content="Honest feature-by-feature comparison between local-rag and tobi/qmd — two on-device hybrid retrieval systems for LLM agents via MCP." />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel-2: #1c2230;
+    --border: #262d3d;
+    --text: #e6e8ee;
+    --muted: #9aa3b2;
+    --accent: #6ea8ff;
+    --yes: #4ade80;
+    --no: #f87171;
+    --partial: #fbbf24;
+    --neutral: #94a3b8;
+    --row-alt: #131722;
+    --heading: #ffffff;
+    --callout-bg: #1a1f2d;
+    --callout-border: #2d3648;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --panel-2: #f1f3f9;
+      --border: #e2e6ef;
+      --text: #1a1f2b;
+      --muted: #5b6473;
+      --accent: #2563eb;
+      --yes: #15803d;
+      --no: #b91c1c;
+      --partial: #b45309;
+      --neutral: #475569;
+      --row-alt: #f8f9fc;
+      --heading: #0b1020;
+      --callout-bg: #f4f6fb;
+      --callout-border: #dbe2ee;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+  header.hero { margin-bottom: 32px; }
+  .eyebrow {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-size: clamp(28px, 4vw, 42px);
+    line-height: 1.15;
+    margin: 0 0 16px;
+    color: var(--heading);
+    letter-spacing: -0.01em;
+  }
+  h1 .vs { color: var(--muted); font-weight: 500; }
+  .lede {
+    color: var(--muted);
+    font-size: 17px;
+    max-width: 820px;
+    margin: 0 0 20px;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .meta a { color: var(--accent); text-decoration: none; }
+  .meta a:hover { text-decoration: underline; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 10px;
+  }
+
+  .callout {
+    background: var(--callout-bg);
+    border: 1px solid var(--callout-border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 24px 0 8px;
+    font-size: 14.5px;
+    color: var(--text);
+  }
+  .callout strong { color: var(--heading); }
+
+  .summary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 32px 0 8px;
+  }
+  @media (max-width: 720px) { .summary { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 22px;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 18px; color: var(--heading); }
+  .card .sub { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .card p { margin: 0 0 10px; font-size: 14px; color: var(--text); }
+  .card ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+  .card li { margin-bottom: 4px; }
+  .card .pill {
+    display: inline-block;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-right: 6px;
+  }
+
+  section.group { margin-top: 44px; }
+  section.group h2 {
+    font-size: 20px;
+    margin: 0 0 14px;
+    color: var(--heading);
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  section.group h2::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 20px;
+    border-radius: 3px;
+    background: var(--accent);
+  }
+  section.group > p.note {
+    color: var(--muted);
+    font-size: 14px;
+    margin: -4px 0 14px;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  thead th {
+    background: var(--panel-2);
+    color: var(--heading);
+    text-align: left;
+    font-weight: 600;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+  }
+  thead th:first-child { width: 30%; }
+  tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tbody tr:nth-child(even) td { background: var(--row-alt); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.feature { color: var(--heading); font-weight: 500; }
+
+  .mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+    font-size: 13.5px;
+  }
+  .mark.yes { color: var(--yes); }
+  .mark.no  { color: var(--no); }
+  .mark.partial { color: var(--partial); }
+  .mark.neutral { color: var(--neutral); }
+  .mark .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .detail {
+    display: block;
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 2px;
+    font-weight: 400;
+  }
+  .cost {
+    display: inline-block;
+    font-size: 11.5px;
+    color: var(--muted);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-top: 4px;
+  }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  @media print {
+    body { background: #fff; color: #000; }
+    .page { padding: 16px; max-width: none; }
+    .card, .table-wrap, .callout { break-inside: avoid; }
+    thead th { position: static; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero">
+  <div class="eyebrow">Competitive comparison &middot; Research refreshed 2026-04-19</div>
+  <h1>local-rag <span class="vs">vs.</span> qmd</h1>
+  <p class="lede">
+    Two on-device hybrid retrieval systems that expose search to LLM agents via MCP.
+    Same niche, materially different design philosophies. This page tries to be honest:
+    not every "yes" is a win, and "not documented" is noted as such rather than treated as "no."
+  </p>
+  <div class="meta">
+    <span class="chip"><a href="https://github.com/dgourlay/local-rag">github.com/dgourlay/local-rag</a></span>
+    <span class="chip"><a href="https://github.com/tobi/qmd">github.com/tobi/qmd</a></span>
+  </div>
+</header>
+
+<div class="callout">
+  <strong>How to read this page.</strong> More features is not the same as better.
+  local-rag's pipeline is deliberately elaborate; qmd's is deliberately minimal.
+  Both are legitimate design choices. Where a capability adds real cost (extra dependencies,
+  latency, index-time LLM calls), we say so. Where a feature couldn't be confirmed from
+  public sources, it is marked <em>Not confirmed</em> rather than <em>No</em>.
+</div>
+
+<div class="summary">
+  <div class="card">
+    <h3>local-rag</h3>
+    <div class="sub">Python 3.11+ &middot; Qdrant (Docker) &middot; BGE-M3 &middot; Apache-2.0 &middot; 0 stars (new)</div>
+    <p>Broader format coverage and a deeper retrieval pipeline. Strong fit if your corpus is mixed PDF/DOCX and you already live in the Claude/Kiro ecosystem.</p>
+    <ul>
+      <li><span class="pill">Strength</span>PDF, DOCX, OCR via Docling</li>
+      <li><span class="pill">Strength</span>Pyramid summaries, HyDE, recency boost, citation expansion</li>
+      <li><span class="pill">Cost</span>Requires Docker and an external LLM CLI (claude/kiro-cli)</li>
+      <li><span class="pill">Cost</span>No published package; clone + <code>make setup</code> to install</li>
+      <li><span class="pill">Cost</span>More complex pipeline has known latency suspects still under investigation</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>qmd <span style="color:var(--muted); font-weight:400;">(by Tobi Lütke)</span></h3>
+    <div class="sub">TypeScript &middot; Node &ge;22 / Bun &middot; SQLite + sqlite-vec &middot; ~22k stars &middot; v2.1.0</div>
+    <p>Smaller surface, self-contained runtime, strong developer ergonomics. Designed around markdown and source code, with distribution and polish well ahead of local-rag.</p>
+    <ul>
+      <li><span class="pill">Strength</span>No Docker, no external LLM CLI — node-llama-cpp runs everything in-process</li>
+      <li><span class="pill">Strength</span>Published on npm, SDK mode (<code>QMDStore</code>), Raycast + OpenClaw integrations</li>
+      <li><span class="pill">Strength</span>AST-aware code chunking (tree-sitter), fine-tuned 1.7B query-expansion model</li>
+      <li><span class="pill">Cost</span>No PDF, DOCX, or OCR ingestion</li>
+      <li><span class="pill">Cost</span>Simpler ranking (fewer lanes, no recency signal, no summary hierarchy)</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===================== Runtime & Installation ===================== -->
+<section class="group">
+  <h2>Runtime &amp; Installation</h2>
+  <p class="note">qmd has a meaningful advantage here: one command, no Docker, no external CLI.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feature</th><th>local-rag</th><th>qmd</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="feature">Language / runtime</td>
+          <td>Python 3.11+</td>
+          <td>Node &ge;22 or Bun (TypeScript)</td>
+        </tr>
+        <tr>
+          <td class="feature">Install path</td>
+          <td><code>git clone</code> + <code>make setup</code><span class="detail">No published package yet</span></td>
+          <td><code>npx @tobilu/qmd</code><span class="detail">Published to npm, semver releases</span></td>
+        </tr>
+        <tr>
+          <td class="feature">External services required</td>
+          <td><span class="mark no"><span class="dot"></span>Qdrant (Docker)</span><span class="detail">Container must be running before indexing or search</span></td>
+          <td><span class="mark yes"><span class="dot"></span>None</span><span class="detail">SQLite + sqlite-vec embedded in-process</span></td>
+        </tr>
+        <tr>
+          <td class="feature">External LLM dependency</td>
+          <td><span class="mark no"><span class="dot"></span>Required for summarization, question generation, HyDE</span><span class="detail">Shells out to a user-configured CLI (claude, kiro-cli, &hellip;)</span></td>
+          <td><span class="mark yes"><span class="dot"></span>None</span><span class="detail">node-llama-cpp runs GGUF models in-process</span></td>
+        </tr>
+        <tr>
+          <td class="feature">Model footprint on disk</td>
+          <td>~6.4GB (BGE-M3 + BGE-reranker-v2-m3)</td>
+          <td>Quantized GGUF models (smaller, varies by config)</td>
+        </tr>
+        <tr>
+          <td class="feature">License</td>
+          <td>Apache-2.0</td>
+          <td>Not confirmed from public sources</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== Document Ingestion ===================== -->
+<section class="group">
+  <h2>Document Ingestion</h2>
+  <p class="note">This is where the two projects genuinely diverge. local-rag handles office documents; qmd handles source code.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feature</th><th>local-rag</th><th>qmd</th></tr></thead>
+      <tbody>
+        <tr><td class="feature">Markdown / plain text</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">First-class, markdown-aware</span></td>
+        </tr>
+        <tr><td class="feature">PDF</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">Docling, subprocess-isolated</span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+        <tr><td class="feature">DOCX</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">Docling</span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+        <tr><td class="feature">OCR for scanned documents</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">OcrAutoOptions</span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+        <tr><td class="feature">Source-code AST chunking</td>
+          <td><span class="mark no"><span class="dot"></span>No</span><span class="detail">No tree-sitter integration; code is treated as text</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">tree-sitter splits by class, function, imports</span></td>
+        </tr>
+        <tr><td class="feature">Filesystem watcher / auto-reindex</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">watchdog</span></td>
+          <td><span class="mark neutral"><span class="dot"></span>Not confirmed</span></td>
+        </tr>
+        <tr><td class="feature">Collection management</td>
+          <td>Folder-based (configured paths)</td>
+          <td>Glob-pattern collections, add/list/remove commands</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== Chunking ===================== -->
+<section class="group">
+  <h2>Chunking</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feature</th><th>local-rag</th><th>qmd</th></tr></thead>
+      <tbody>
+        <tr><td class="feature">Fixed-size chunking</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">512 tokens, 64 overlap</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span></td>
+        </tr>
+        <tr><td class="feature">Semantic / boundary-aware chunking</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">Max-Min algorithm, BGE-M3 sentence embeddings</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">Smart boundary detection; markdown-aware</span></td>
+        </tr>
+        <tr><td class="feature">Code-aware (AST) chunking</td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">tree-sitter</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== Indexing & Enrichment ===================== -->
+<section class="group">
+  <h2>Indexing &amp; Enrichment</h2>
+  <p class="note">local-rag does substantially more at index time. That improves some retrieval shapes and costs index-time latency + external LLM calls.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feature</th><th>local-rag</th><th>qmd</th></tr></thead>
+      <tbody>
+        <tr><td class="feature">Dense embeddings</td>
+          <td>BGE-M3 (1024-dim)</td>
+          <td>Qwen3-Embedding (configurable; strong on CJK)</td>
+        </tr>
+        <tr><td class="feature">Keyword index</td>
+          <td>Qdrant keyword fields</td>
+          <td>SQLite FTS5 (BM25)</td>
+        </tr>
+        <tr><td class="feature">Auto-generated questions per chunk</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">3 per chunk, prepended before embed</span><span class="cost">Cost: LLM call per chunk at index time</span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+        <tr><td class="feature">Hierarchical document summaries</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">5 doc levels (8w/16w/32w/64w/128w) + 3 section levels</span><span class="cost">Cost: multiple LLM calls per doc; only 128w is embedded</span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+        <tr><td class="feature">Key-topic extraction</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">Keyword-indexed in payload</span></td>
+          <td><span class="mark neutral"><span class="dot"></span>Not confirmed</span></td>
+        </tr>
+        <tr><td class="feature">Context metadata on chunks</td>
+          <td>Summaries and topics on summary records</td>
+          <td>Hierarchical path-based descriptors on every chunk</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== Query Processing ===================== -->
+<section class="group">
+  <h2>Query Processing</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feature</th><th>local-rag</th><th>qmd</th></tr></thead>
+      <tbody>
+        <tr><td class="feature">Query classification</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">broad / specific / navigational, used for layer weighting</span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+        <tr><td class="feature">Query expansion</td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">Fine-tuned 1.7B model, 1 alternative query; original weighted 2&times;</span></td>
+        </tr>
+        <tr><td class="feature">HyDE (hypothetical document embedding)</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">Configurable; only fires for broad queries</span><span class="cost">Cost: shell-out to LLM CLI on the query path; flagged as a latency suspect</span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== Retrieval & Ranking ===================== -->
+<section class="group">
+  <h2>Retrieval &amp; Ranking</h2>
+  <p class="note">local-rag has more machinery. Whether that produces better results on your corpus is an empirical question — neither project publishes benchmarks.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feature</th><th>local-rag</th><th>qmd</th></tr></thead>
+      <tbody>
+        <tr><td class="feature">Parallel BM25 + vector</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">ThreadPoolExecutor</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span></td>
+        </tr>
+        <tr><td class="feature">Retrieval lanes</td>
+          <td>3 dense (doc-summary / section-summary / chunks) + 1 keyword<span class="detail">RRF over 4 ranked lists + layer weighting</span></td>
+          <td>BM25 + vector per query, with original + expanded query<span class="detail">RRF with position-aware bonuses (+0.05 for #1, +0.02 for #2&ndash;3)</span></td>
+        </tr>
+        <tr><td class="feature">Recency boost</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">90-day half-life, max 15% influence</span></td>
+          <td><span class="mark neutral"><span class="dot"></span>Not confirmed</span></td>
+        </tr>
+        <tr><td class="feature">Cross-encoder reranker</td>
+          <td>BGE-reranker-v2-m3 (ONNX)</td>
+          <td>Qwen3 cross-encoder 0.6B (yes/no + confidence logprobs)</td>
+        </tr>
+        <tr><td class="feature">Reranker input enrichment</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">Summary hits get title + topics prepended before rerank</span><span class="cost">Needed because summaries alone are thin input for a reranker</span></td>
+          <td><span class="mark neutral"><span class="dot"></span>N/A</span><span class="detail">qmd reranks chunks directly</span></td>
+        </tr>
+        <tr><td class="feature">Citation / source expansion</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">Summary hits expand to grounded source chunks for the LLM</span><span class="cost">Needed because local-rag embeds summaries as first-class hits; qmd operates directly on source chunks</span></td>
+          <td><span class="mark neutral"><span class="dot"></span>N/A by design</span></td>
+        </tr>
+        <tr><td class="feature">Published retrieval benchmarks</td>
+          <td><span class="mark no"><span class="dot"></span>No</span><span class="detail">On the backlog; no precision/recall numbers yet</span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== Interfaces ===================== -->
+<section class="group">
+  <h2>Interfaces</h2>
+  <p class="note">qmd exposes more surface area for developers: SDK, more output formats, shipped package.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feature</th><th>local-rag</th><th>qmd</th></tr></thead>
+      <tbody>
+        <tr><td class="feature">CLI</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail"><code>rag search/index/watch/status/doctor</code></span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail"><code>search</code> / <code>vsearch</code> / <code>query</code></span></td>
+        </tr>
+        <tr><td class="feature">Embeddable SDK / library</td>
+          <td><span class="mark no"><span class="dot"></span>No</span><span class="detail">Python modules exist but no documented stable API</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail"><code>QMDStore</code> — stable library API for Node/Bun apps</span></td>
+        </tr>
+        <tr><td class="feature">MCP server (stdio)</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span></td>
+        </tr>
+        <tr><td class="feature">MCP server (Streamable HTTP)</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span></td>
+          <td><span class="mark neutral"><span class="dot"></span>Not confirmed</span></td>
+        </tr>
+        <tr><td class="feature">MCP tool surface</td>
+          <td>5 tools (search_documents, quick_search, get_document_context, list_recent_documents, get_sync_status)<span class="detail">More tools = more options, but also more for an LLM to route among</span></td>
+          <td>Smaller surface centered on <code>query</code> + document retrieval<span class="detail">Query tool accepts a structured query document with typed sub-queries</span></td>
+        </tr>
+        <tr><td class="feature">MCP prompts / slash commands</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">3: <code>/research</code>, <code>/discover</code>, <code>/catch-up</code></span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+        <tr><td class="feature">Output formats</td>
+          <td>text (LLM-friendly) + JSON</td>
+          <td>CLI, JSON, CSV, Markdown, XML</td>
+        </tr>
+        <tr><td class="feature">Progressive-disclosure detail levels</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail">8w / 32w / 128w summary tiers on MCP responses</span></td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== Operations & Ecosystem ===================== -->
+<section class="group">
+  <h2>Operations &amp; Ecosystem</h2>
+  <p class="note">qmd is further along on distribution. local-rag is further along on self-diagnosis tooling.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feature</th><th>local-rag</th><th>qmd</th></tr></thead>
+      <tbody>
+        <tr><td class="feature">Health-check / doctor</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail"><code>rag doctor</code>, <code>rag status</code></span></td>
+          <td><span class="mark neutral"><span class="dot"></span>Not confirmed</span></td>
+        </tr>
+        <tr><td class="feature">Debug / trace mode</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail"><code>--debug</code>: per-lane counts, weights, timing</span></td>
+          <td><span class="mark neutral"><span class="dot"></span>Not confirmed</span></td>
+        </tr>
+        <tr><td class="feature">Config</td>
+          <td>TOML (<code>~/.config/local-rag/config.toml</code>)</td>
+          <td>CLI flags + per-collection config</td>
+        </tr>
+        <tr><td class="feature">Reindex single file</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span><span class="detail"><code>rag index --reindex &lt;path&gt;</code></span></td>
+          <td><span class="mark partial"><span class="dot"></span>Via glob</span></td>
+        </tr>
+        <tr><td class="feature">Claude Desktop / Claude Code</td>
+          <td>MCP config installer</td>
+          <td>MCP server documented for Claude clients</td>
+        </tr>
+        <tr><td class="feature">Kiro</td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span></td>
+          <td><span class="mark neutral"><span class="dot"></span>Not confirmed</span></td>
+        </tr>
+        <tr><td class="feature">Raycast extension</td>
+          <td><span class="mark no"><span class="dot"></span>No</span></td>
+          <td><span class="mark yes"><span class="dot"></span>Yes</span></td>
+        </tr>
+        <tr><td class="feature">Agent-framework integrations</td>
+          <td><span class="mark no"><span class="dot"></span>None</span></td>
+          <td><span class="mark yes"><span class="dot"></span>OpenClaw</span><span class="detail">Used as a memory backend</span></td>
+        </tr>
+        <tr><td class="feature">Distribution</td>
+          <td>GitHub only, no releases tagged as a consumable package</td>
+          <td>npm (<code>@tobilu/qmd</code>), 10+ releases, v2.1.0</td>
+        </tr>
+        <tr><td class="feature">Community signal</td>
+          <td>0 stars, newly public</td>
+          <td>~22k stars, 1.4k forks, 194 open issues</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== Honest tradeoff notes ===================== -->
+<section class="group">
+  <h2>Honest Tradeoff Notes</h2>
+  <div class="callout">
+    <strong>Complexity is a cost, not a feature.</strong> local-rag runs more stages: auto-question
+    generation, pyramid summarization, HyDE, a 4-lane fusion, reranker enrichment, and citation
+    expansion. Each adds either index-time or query-time latency, and several require an external
+    LLM CLI. That pipeline may improve retrieval on some corpora; it may also be overkill for
+    simple notes.
+  </div>
+  <div class="callout">
+    <strong>qmd's minimalism is deliberate.</strong> Fewer moving parts means simpler installs,
+    fewer failure modes, and a self-contained runtime. Its <em>single</em> retrieval lane on
+    chunks, expanded by a purpose-trained query-expansion model, is a coherent design — not an
+    omission.
+  </div>
+  <div class="callout">
+    <strong>Things local-rag lacks that are not easy to copy.</strong> A fine-tuned query
+    expansion model, AST-aware chunking via tree-sitter, an embeddable SDK, a published npm
+    package, and existing ecosystem integrations (Raycast, OpenClaw). These are distribution and
+    product-surface gaps, not algorithm gaps.
+  </div>
+  <div class="callout">
+    <strong>Things qmd lacks that are not easy to copy.</strong> Office-document ingestion (PDF,
+    DOCX) and OCR — Docling is a substantial dependency, and getting it right in-process on
+    Node/Bun is non-trivial. If your corpus is primarily office documents, this is a decisive
+    difference.
+  </div>
+  <div class="callout">
+    <strong>Neither project publishes retrieval benchmarks.</strong> Every "better retrieval"
+    claim on either side is unverified. A shared eval set with precision/recall numbers would
+    settle more of this comparison than any feature list.
+  </div>
+</section>
+
+<footer>
+  <div>Research refreshed 2026-04-19 &middot; Some qmd capabilities not visible in public excerpts are noted as "not confirmed" rather than "no."</div>
+  <div>
+    Sources:
+    <a href="https://github.com/dgourlay/local-rag">local-rag</a> &middot;
+    <a href="https://github.com/tobi/qmd">qmd</a> &middot;
+    <a href="https://deepwiki.com/tobi/qmd/7.1-overview">DeepWiki</a> &middot;
+    <a href="https://www.mintlify.com/tobi/qmd">qmd docs</a>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>
