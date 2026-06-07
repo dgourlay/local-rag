@@ -246,9 +246,7 @@ class TestTopicShiftDetected:
         text = " ".join(ml_sents) + " " + " ".join(cook_sents)
         doc = _make_doc(sections=[_make_section(text)])
         embedder = MockEmbedder()
-        chunks = chunk_document_semantic(
-            doc, _semantic_config(), embedder
-        )
+        chunks = chunk_document_semantic(doc, _semantic_config(), embedder)
         assert len(chunks) >= 2
 
 
@@ -278,10 +276,7 @@ class TestMinChunkMerge:
 class TestMaxChunkSplit:
     def test_oversized_chunk_split(self) -> None:
         # Create a very long monotopic section that exceeds max_chunk_tokens
-        sentences = [
-            f"Machine learning algorithm {i} processes data."
-            for i in range(60)
-        ]
+        sentences = [f"Machine learning algorithm {i} processes data." for i in range(60)]
         text = " ".join(sentences)
         doc = _make_doc(sections=[_make_section(text)])
         embedder = MockEmbedder()
@@ -328,10 +323,7 @@ class TestCodeBlockNotSplit:
     def test_code_block_stays_in_one_chunk(self) -> None:
         lines = "\n".join(f"line_{i} = {i}" for i in range(20))
         code = f"```python\n{lines}\n```"
-        text = (
-            f"Before the code block. Some intro text here.\n"
-            f"{code}\nAfter the code."
-        )
+        text = f"Before the code block. Some intro text here.\n{code}\nAfter the code."
         doc = _make_doc(sections=[_make_section(text)])
         embedder = MockEmbedder()
         chunks = chunk_document_semantic(doc, _semantic_config(), embedder)
@@ -365,16 +357,8 @@ class TestDeterministicIds:
 
 class TestSectionBoundaryRespected:
     def test_chunks_never_span_sections(self) -> None:
-        ml = (
-            "Machine learning processes data."
-            " Neural networks are models."
-            " The algorithm trains."
-        )
-        cook = (
-            "Cooking requires recipes."
-            " Baking needs ingredients."
-            " Food preparation is important."
-        )
+        ml = "Machine learning processes data. Neural networks are models. The algorithm trains."
+        cook = "Cooking requires recipes. Baking needs ingredients. Food preparation is important."
         doc = _make_doc(
             sections=[
                 _make_section(
@@ -429,9 +413,13 @@ class TestStrategyDispatch:
         assert len(chunks) >= 1
 
     def test_dispatch_to_semantic(self) -> None:
-        doc = _make_doc(sections=[_make_section(
-            "Machine learning algorithms. Neural networks learn. Training improves models."
-        )])
+        doc = _make_doc(
+            sections=[
+                _make_section(
+                    "Machine learning algorithms. Neural networks learn. Training improves models."
+                )
+            ]
+        )
         embedder = MockEmbedder()
         config = _semantic_config()
         chunks = chunk_document(doc, config, embedder)

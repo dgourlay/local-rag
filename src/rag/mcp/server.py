@@ -71,16 +71,16 @@ def _build_instructions(config: AppConfig) -> str:
     return _INSTRUCTIONS_TEMPLATE.format(folders_block=folders_block)
 
 
-def create_server(config: AppConfig) -> Server:
+def create_server(config: AppConfig, *, preload: bool = False) -> Server:
     """Create and configure the MCP server with all tools registered."""
     instructions = _build_instructions(config)
     server = Server("local-rag", instructions=instructions)
-    register_tools(server, config)
+    register_tools(server, config, preload=preload)
     register_prompts(server, config)
     return server
 
 
-async def run_stdio_server(config: AppConfig) -> None:
+async def run_stdio_server(config: AppConfig, *, preload: bool = False) -> None:
     """Run the MCP server using stdio transport.
 
     All logging goes to stderr so stdout remains clean for JSON-RPC.
@@ -88,7 +88,7 @@ async def run_stdio_server(config: AppConfig) -> None:
     from mcp.server.stdio import stdio_server
 
     _configure_logging()
-    server = create_server(config)
+    server = create_server(config, preload=preload)
 
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
@@ -98,7 +98,7 @@ async def run_stdio_server(config: AppConfig) -> None:
         )
 
 
-async def run_http_server(config: AppConfig) -> None:
+async def run_http_server(config: AppConfig, *, preload: bool = False) -> None:
     """Run the MCP server using Streamable HTTP transport."""
     import uvicorn
     from mcp.server.streamable_http import StreamableHTTPServerTransport
@@ -106,7 +106,7 @@ async def run_http_server(config: AppConfig) -> None:
     from starlette.routing import Mount
 
     _configure_logging()
-    server = create_server(config)
+    server = create_server(config, preload=preload)
 
     transport = StreamableHTTPServerTransport(
         mcp_session_id=None,

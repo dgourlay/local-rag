@@ -27,8 +27,7 @@ class DedupChecker:
 
         if normalized_hash:
             cursor = self._conn.execute(
-                "SELECT canonical_doc_id FROM document_hashes"
-                " WHERE normalized_hash = ?",
+                "SELECT canonical_doc_id FROM document_hashes WHERE normalized_hash = ?",
                 (normalized_hash,),
             )
             row = cursor.fetchone()

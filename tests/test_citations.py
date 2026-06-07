@@ -21,8 +21,10 @@ def _make_hit(
     chunk_order: int | None = 0,
     modified_at: str = "2025-01-01T00:00:00Z",
     record_type: RecordType = RecordType.CHUNK,
+    section_id: str | None = None,
 ) -> SearchHit:
     payload: dict[str, object] = {
+        "record_type": record_type.value,
         "file_path": file_path,
         "title": title,
         "section_heading": section_heading,
@@ -31,6 +33,8 @@ def _make_hit(
         "chunk_order": chunk_order,
         "modified_at": modified_at,
     }
+    if section_id is not None:
+        payload["section_id"] = section_id
     return SearchHit(
         point_id="pt-1",
         score=score,
@@ -57,13 +61,16 @@ def _make_chunk_row(
 
 @pytest.fixture
 def mock_db() -> MagicMock:
-    return MagicMock()
+    db = MagicMock()
+    db.get_adjacent_chunks_batch.return_value = {}
+    db.get_chunks_by_documents.return_value = {}
+    db.get_chunks_by_sections.return_value = {}
+    return db
 
 
 class TestCitationLabel:
     def test_full_label(self, mock_db: MagicMock) -> None:
         assembler = CitationAssembler(mock_db)
-        mock_db.get_adjacent_chunks.return_value = []
         hit = _make_hit(section_heading="Introduction", page_start=12, page_end=14)
         results = assembler.assemble_citations([hit], expand_context=False)
         assert len(results) == 1
@@ -116,34 +123,100 @@ class TestCitationFields:
 class TestContextExpansion:
     def test_expands_with_adjacent_chunks(self, mock_db: MagicMock) -> None:
         assembler = CitationAssembler(mock_db)
-        mock_db.get_adjacent_chunks.return_value = [
-            _make_chunk_row(0, "Before chunk."),
-            _make_chunk_row(1, "Main chunk."),
-            _make_chunk_row(2, "After chunk."),
-        ]
+        mock_db.get_adjacent_chunks_batch.return_value = {
+            ("doc-1", 1): [
+                _make_chunk_row(0, "Before chunk."),
+                _make_chunk_row(1, "Main chunk."),
+                _make_chunk_row(2, "After chunk."),
+            ]
+        }
         hit = _make_hit(text="Main chunk.", chunk_order=1)
         results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         assert "Before chunk." in results[0].text
         assert "Main chunk." in results[0].text
         assert "After chunk." in results[0].text
+        mock_db.get_adjacent_chunks_batch.assert_called_once_with([("doc-1", 1)], 1)
+        mock_db.get_adjacent_chunks.assert_not_called()
+
+    def test_batches_adjacent_chunk_expansion(self, mock_db: MagicMock) -> None:
+        assembler = CitationAssembler(mock_db)
+        mock_db.get_adjacent_chunks_batch.return_value = {
+            ("doc-1", 1): [_make_chunk_row(1, "Main one.")],
+            ("doc-2", 4): [_make_chunk_row(4, "Main two.", doc_id="doc-2")],
+        }
+        hits = [
+            _make_hit(text="Main one.", chunk_order=1, doc_id="doc-1"),
+            _make_hit(text="Main two.", chunk_order=4, doc_id="doc-2"),
+        ]
+        results = assembler.assemble_citations(hits, expand_context=True, context_window=2)
+        assert [result.text for result in results] == ["Main one.", "Main two."]
+        mock_db.get_adjacent_chunks_batch.assert_called_once_with([("doc-1", 1), ("doc-2", 4)], 2)
+        mock_db.get_adjacent_chunks.assert_not_called()
+
+    def test_expands_document_summary_with_batched_doc_chunks(self, mock_db: MagicMock) -> None:
+        assembler = CitationAssembler(mock_db)
+        mock_db.get_chunks_by_documents.return_value = {
+            "doc-1": [
+                _make_chunk_row(0, "First source chunk."),
+                _make_chunk_row(1, "Second source chunk."),
+            ]
+        }
+        hit = _make_hit(
+            text="Document summary.",
+            chunk_order=None,
+            record_type=RecordType.DOCUMENT_SUMMARY,
+        )
+
+        results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
+
+        assert results[0].text == (
+            "[Summary] Document summary.\n\nFirst source chunk.\n\nSecond source chunk."
+        )
+        mock_db.get_chunks_by_documents.assert_called_once_with(["doc-1"], limit_per_doc=3)
+        mock_db.get_chunks.assert_not_called()
+
+    def test_expands_section_summary_with_batched_section_chunks(self, mock_db: MagicMock) -> None:
+        assembler = CitationAssembler(mock_db)
+        mock_db.get_chunks_by_sections.return_value = {
+            "sec-1": [
+                _make_chunk_row(0, "First section chunk."),
+                _make_chunk_row(1, "Second section chunk."),
+            ]
+        }
+        hit = _make_hit(
+            text="Section summary.",
+            chunk_order=None,
+            record_type=RecordType.SECTION_SUMMARY,
+            section_id="sec-1",
+        )
+
+        results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
+
+        assert results[0].text == (
+            "[Section Summary] Section summary.\n\nFirst section chunk.\n\nSecond section chunk."
+        )
+        mock_db.get_chunks_by_sections.assert_called_once_with(["sec-1"])
+        mock_db.get_chunks_by_section.assert_not_called()
 
     def test_no_expansion_when_disabled(self, mock_db: MagicMock) -> None:
         assembler = CitationAssembler(mock_db)
         hit = _make_hit(text="Only this text.")
         results = assembler.assemble_citations([hit], expand_context=False)
         assert results[0].text == "Only this text."
-        mock_db.get_adjacent_chunks.assert_not_called()
+        mock_db.get_adjacent_chunks_batch.assert_not_called()
 
     def test_no_expansion_when_chunk_order_missing(self, mock_db: MagicMock) -> None:
         assembler = CitationAssembler(mock_db)
         hit = _make_hit(text="Original text.", chunk_order=None)
         results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         assert results[0].text == "Original text."
-        mock_db.get_adjacent_chunks.assert_not_called()
+        mock_db.get_adjacent_chunks_batch.assert_not_called()
+        mock_db.get_chunks_by_documents.assert_not_called()
+        mock_db.get_chunks_by_sections.assert_not_called()
 
     def test_fallback_when_no_adjacent_chunks(self, mock_db: MagicMock) -> None:
         assembler = CitationAssembler(mock_db)
-        mock_db.get_adjacent_chunks.return_value = []
+        mock_db.get_adjacent_chunks_batch.return_value = {("doc-1", 0): []}
         hit = _make_hit(text="Standalone chunk.", chunk_order=0)
         results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         assert results[0].text == "Standalone chunk."
@@ -156,10 +229,12 @@ class TestOverlapDedup:
         overlap = "This is the overlapping portion."
         chunk_a = f"First part of chunk A. {overlap}"
         chunk_b = f"{overlap} Second part of chunk B."
-        mock_db.get_adjacent_chunks.return_value = [
-            _make_chunk_row(0, chunk_a),
-            _make_chunk_row(1, chunk_b),
-        ]
+        mock_db.get_adjacent_chunks_batch.return_value = {
+            ("doc-1", 0): [
+                _make_chunk_row(0, chunk_a),
+                _make_chunk_row(1, chunk_b),
+            ]
+        }
         hit = _make_hit(text="whatever", chunk_order=0)
         results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         merged = results[0].text
@@ -170,10 +245,12 @@ class TestOverlapDedup:
 
     def test_no_overlap_joined_with_separator(self, mock_db: MagicMock) -> None:
         assembler = CitationAssembler(mock_db)
-        mock_db.get_adjacent_chunks.return_value = [
-            _make_chunk_row(0, "Chunk A content."),
-            _make_chunk_row(1, "Chunk B content."),
-        ]
+        mock_db.get_adjacent_chunks_batch.return_value = {
+            ("doc-1", 0): [
+                _make_chunk_row(0, "Chunk A content."),
+                _make_chunk_row(1, "Chunk B content."),
+            ]
+        }
         hit = _make_hit(text="whatever", chunk_order=0)
         results = assembler.assemble_citations([hit], expand_context=True, context_window=1)
         assert results[0].text == "Chunk A content.\n\nChunk B content."

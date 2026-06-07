@@ -109,6 +109,8 @@ class QuestionsConfig(BaseModel):
 
 class RetrievalConfig(BaseModel):
     hyde_enabled: bool = True
+    cache_enabled: bool = True
+    cache_max_entries: int = Field(default=128, ge=0, le=10_000)
 
 
 class MCPConfig(BaseModel):

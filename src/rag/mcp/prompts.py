@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
     from rag.config import AppConfig
 
+
 def _folder_clause(folder: str | None) -> str:
     return f" Filter to folder: {folder}." if folder else ""
 
@@ -73,9 +74,7 @@ _PROMPTS: list[types.Prompt] = [
 _PROMPT_MAP: dict[str, types.Prompt] = {p.name: p for p in _PROMPTS}
 
 
-def _build_research_messages(
-    topic: str, folder: str | None
-) -> list[types.PromptMessage]:
+def _build_research_messages(topic: str, folder: str | None) -> list[types.PromptMessage]:
     fc = _folder_clause(folder)
     return _user_message(
         f"Research the following topic across my indexed documents: {topic}\n\n"
@@ -143,6 +142,4 @@ def register_prompts(server: Server, config: AppConfig) -> None:
         else:
             raise ValueError(f"Unknown prompt: {name}")
 
-        return types.GetPromptResult(
-            description=_PROMPT_MAP[name].description, messages=messages
-        )
+        return types.GetPromptResult(description=_PROMPT_MAP[name].description, messages=messages)

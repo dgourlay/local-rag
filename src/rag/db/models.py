@@ -136,6 +136,18 @@ class SqliteMetadataDB:
             return None
         return _row_to_document(row)
 
+    def get_documents(self, doc_ids: list[str]) -> dict[str, DocumentRow]:
+        unique_doc_ids = list(dict.fromkeys(doc_ids))
+        if not unique_doc_ids:
+            return {}
+
+        rows = self._conn.execute(
+            f"SELECT * FROM documents WHERE doc_id IN ({_placeholders(len(unique_doc_ids))})",
+            tuple(unique_doc_ids),
+        ).fetchall()
+        documents = [_row_to_document(r) for r in rows]
+        return {doc.doc_id: doc for doc in documents}
+
     def get_document_by_path(self, file_path: str) -> DocumentRow | None:
         row = self._conn.execute(
             "SELECT * FROM documents WHERE file_path = ?", (file_path,)
@@ -221,6 +233,44 @@ class SqliteMetadataDB:
         ).fetchall()
         return [_row_to_chunk(r) for r in rows]
 
+    def get_chunks_by_documents(
+        self, doc_ids: list[str], limit_per_doc: int | None = None
+    ) -> dict[str, list[ChunkRow]]:
+        unique_doc_ids = list(dict.fromkeys(doc_ids))
+        if not unique_doc_ids:
+            return {}
+
+        chunks_by_doc: dict[str, list[ChunkRow]] = {doc_id: [] for doc_id in unique_doc_ids}
+        placeholders = _placeholders(len(unique_doc_ids))
+        if limit_per_doc is None:
+            rows = self._conn.execute(
+                f"""SELECT * FROM chunks
+                WHERE doc_id IN ({placeholders})
+                ORDER BY doc_id, chunk_order""",
+                tuple(unique_doc_ids),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                f"""SELECT * FROM (
+                    SELECT
+                        chunks.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY doc_id
+                            ORDER BY chunk_order
+                        ) AS row_num
+                    FROM chunks
+                    WHERE doc_id IN ({placeholders})
+                )
+                WHERE row_num <= ?
+                ORDER BY doc_id, chunk_order""",
+                (*unique_doc_ids, limit_per_doc),
+            ).fetchall()
+
+        for row in rows:
+            chunk = _row_to_chunk(row)
+            chunks_by_doc[chunk.doc_id].append(chunk)
+        return chunks_by_doc
+
     def get_chunk(self, chunk_id: str) -> ChunkRow | None:
         row = self._conn.execute("SELECT * FROM chunks WHERE chunk_id = ?", (chunk_id,)).fetchone()
         if row is None:
@@ -234,6 +284,26 @@ class SqliteMetadataDB:
         ).fetchall()
         return [_row_to_chunk(r) for r in rows]
 
+    def get_chunks_by_sections(self, section_ids: list[str]) -> dict[str, list[ChunkRow]]:
+        unique_section_ids = list(dict.fromkeys(section_ids))
+        if not unique_section_ids:
+            return {}
+
+        chunks_by_section: dict[str, list[ChunkRow]] = {
+            section_id: [] for section_id in unique_section_ids
+        }
+        rows = self._conn.execute(
+            f"""SELECT * FROM chunks
+            WHERE section_id IN ({_placeholders(len(unique_section_ids))})
+            ORDER BY section_id, chunk_order""",
+            tuple(unique_section_ids),
+        ).fetchall()
+        for row in rows:
+            chunk = _row_to_chunk(row)
+            if chunk.section_id is not None:
+                chunks_by_section[chunk.section_id].append(chunk)
+        return chunks_by_section
+
     def get_adjacent_chunks(self, doc_id: str, chunk_order: int, window: int) -> list[ChunkRow]:
         rows = self._conn.execute(
             """SELECT * FROM chunks
@@ -243,6 +313,42 @@ class SqliteMetadataDB:
             (doc_id, chunk_order - window, chunk_order + window),
         ).fetchall()
         return [_row_to_chunk(r) for r in rows]
+
+    def get_adjacent_chunks_batch(
+        self, centers: list[tuple[str, int]], window: int
+    ) -> dict[tuple[str, int], list[ChunkRow]]:
+        unique_centers = list(dict.fromkeys(centers))
+        if not unique_centers:
+            return {}
+
+        where_parts: list[str] = []
+        params: list[str | int] = []
+        for doc_id, chunk_order in unique_centers:
+            where_parts.append("(doc_id = ? AND chunk_order BETWEEN ? AND ?)")
+            params.extend([doc_id, chunk_order - window, chunk_order + window])
+
+        rows = self._conn.execute(
+            f"""SELECT * FROM chunks
+            WHERE {" OR ".join(where_parts)}
+            ORDER BY doc_id, chunk_order""",
+            tuple(params),
+        ).fetchall()
+        chunks = [_row_to_chunk(r) for r in rows]
+
+        chunks_by_doc: dict[str, list[ChunkRow]] = {}
+        for chunk in chunks:
+            chunks_by_doc.setdefault(chunk.doc_id, []).append(chunk)
+
+        adjacent_by_center: dict[tuple[str, int], list[ChunkRow]] = {}
+        for doc_id, chunk_order in unique_centers:
+            lower = chunk_order - window
+            upper = chunk_order + window
+            adjacent_by_center[(doc_id, chunk_order)] = [
+                chunk
+                for chunk in chunks_by_doc.get(doc_id, [])
+                if lower <= chunk.chunk_order <= upper
+            ]
+        return adjacent_by_center
 
     def log_processing(self, entry: ProcessingLogEntry) -> None:
         self._conn.execute(
@@ -267,6 +373,30 @@ class SqliteMetadataDB:
     def get_chunk_count(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()
         return int(row[0])
+
+    def get_index_fingerprint(self) -> str:
+        row = self._conn.execute(
+            """SELECT
+                (SELECT COUNT(*) FROM documents) AS document_count,
+                (SELECT COUNT(*) FROM sections) AS section_count,
+                (SELECT COUNT(*) FROM chunks) AS chunk_count,
+                (SELECT COUNT(*) FROM sync_state WHERE NOT is_deleted) AS tracked_count,
+                (SELECT COALESCE(MAX(id), 0) FROM processing_log) AS processing_log_max_id,
+                (SELECT COALESCE(MAX(modified_at), '') FROM documents) AS max_modified_at,
+                (SELECT COALESCE(MAX(raw_content_hash), '') FROM documents) AS max_raw_hash,
+                (SELECT COALESCE(MAX(normalized_content_hash), '') FROM documents)
+                    AS max_normalized_hash,
+                (SELECT COALESCE(MAX(summary_content_hash), '') FROM documents)
+                    AS max_summary_hash
+            """
+        ).fetchone()
+        return (
+            f"docs={row['document_count']};sections={row['section_count']};"
+            f"chunks={row['chunk_count']};tracked={row['tracked_count']};"
+            f"log={row['processing_log_max_id']};modified={row['max_modified_at']};"
+            f"raw={row['max_raw_hash']};normalized={row['max_normalized_hash']};"
+            f"summary={row['max_summary_hash']}"
+        )
 
     def get_error_count(self) -> int:
         row = self._conn.execute(
@@ -332,6 +462,10 @@ def _row_to_sync_state(row: sqlite3.Row) -> SyncStateRow:
         is_deleted=row["is_deleted"],
         created_at=row["created_at"],
     )
+
+
+def _placeholders(count: int) -> str:
+    return ", ".join("?" for _ in range(count))
 
 
 def _row_to_document(row: sqlite3.Row) -> DocumentRow:

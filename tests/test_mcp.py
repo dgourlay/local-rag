@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 
 from rag.mcp.server import create_server
 from rag.mcp.tools import (
+    _PRELOAD_QUERY,
     _TOOLS,
     _Components,
     _error_content,
@@ -56,6 +57,7 @@ def _make_components() -> tuple[_Components, MagicMock, MagicMock]:
     mock_db = MagicMock()
     mock_engine = MagicMock()
     mock_engine.async_search = AsyncMock()
+    mock_db.get_documents.return_value = {}
     components._db = mock_db
     components._engine = mock_engine
 
@@ -157,6 +159,70 @@ class TestToolRegistration:
         assert server.name == "local-rag"
 
 
+class TestPreload:
+    def test_components_preload_initializes_and_warms_backends(self) -> None:
+        """preload initializes persistent components and warms model-backed services."""
+        config = _make_config()
+        components = _Components(config)
+
+        conn = MagicMock()
+        db = MagicMock()
+        vector_store = MagicMock()
+        embedder = MagicMock()
+        reranker = MagicMock()
+        engine = MagicMock()
+
+        with (
+            patch("rag.db.connection.get_connection", return_value=conn) as mock_get_connection,
+            patch("rag.db.migrations.run_migrations") as mock_run_migrations,
+            patch("rag.db.models.SqliteMetadataDB", return_value=db) as mock_db_cls,
+            patch("rag.db.qdrant.QdrantVectorStore", return_value=vector_store) as mock_vector_cls,
+            patch(
+                "rag.pipeline.embedder.SentenceTransformerEmbedder",
+                return_value=embedder,
+            ) as mock_embedder_cls,
+            patch(
+                "rag.retrieval.reranker.OnnxReranker", return_value=reranker
+            ) as mock_reranker_cls,
+            patch("rag.retrieval.citations.CitationAssembler") as mock_citations_cls,
+            patch("rag.retrieval.engine.RetrievalEngine", return_value=engine) as mock_engine_cls,
+        ):
+            components.preload()
+
+        mock_get_connection.assert_called_once_with(config.database.path)
+        mock_run_migrations.assert_called_once_with(conn)
+        mock_db_cls.assert_called_once_with(conn)
+        mock_vector_cls.assert_called_once_with(config.qdrant)
+        vector_store.ensure_collection.assert_called_once_with()
+        mock_embedder_cls.assert_called_once_with(config.embedding)
+        mock_reranker_cls.assert_called_once_with(config.reranker)
+        mock_citations_cls.assert_called_once_with(db)
+        mock_engine_cls.assert_called_once()
+        db.get_document_count.assert_called_once_with()
+        embedder.embed_query.assert_called_once_with(_PRELOAD_QUERY)
+        reranker._ensure_loaded.assert_called_once_with()
+        assert components.db is db
+        assert components.engine is engine
+
+    def test_create_server_does_not_preload_by_default(self) -> None:
+        """create_server preserves lazy initialization by default."""
+        config = _make_config()
+
+        with patch("rag.mcp.tools._Components.preload") as mock_preload:
+            create_server(config)
+
+        mock_preload.assert_not_called()
+
+    def test_create_server_preload_flag_warms_components(self) -> None:
+        """create_server wires explicit preload into tool component startup."""
+        config = _make_config()
+
+        with patch("rag.mcp.tools._Components.preload") as mock_preload:
+            create_server(config, preload=True)
+
+        mock_preload.assert_called_once_with()
+
+
 # --- search_documents Tests ---
 
 
@@ -177,6 +243,7 @@ class TestSearchDocuments:
         assert len(data["results"]) == 1
         assert data["results"][0]["text"] == "sample text"
         assert data["query_classification"] == "broad"
+        _db.get_documents.assert_not_called()
 
     def test_returns_results_text_default(self) -> None:
         """search_documents defaults to text format."""
@@ -186,7 +253,7 @@ class TestSearchDocuments:
             hits=cited,
             query_classification="broad",
         )
-        mock_db.get_document.return_value = _make_document_row()
+        mock_db.get_documents.return_value = {"doc-1": _make_document_row()}
 
         result = asyncio.run(_handle_search(components, {"query": "test query"}))
 
@@ -195,6 +262,8 @@ class TestSearchDocuments:
         # Should be plain text, not JSON
         assert "Found 1 results across 1 documents" in text
         assert "Test Doc" in text
+        mock_db.get_documents.assert_called_once_with(["doc-1"])
+        mock_db.get_document.assert_not_called()
 
     def test_with_filters(self) -> None:
         """search_documents passes folder and date filters."""
@@ -241,7 +310,7 @@ class TestSearchDocuments:
 
     def test_debug_info_included_text(self) -> None:
         """search_documents includes debug_info in text format."""
-        components, _db, mock_engine = _make_components()
+        components, mock_db, mock_engine = _make_components()
         mock_engine.async_search.return_value = RetrievalResult(
             hits=[],
             query_classification="broad",
@@ -252,6 +321,7 @@ class TestSearchDocuments:
 
         text = result[0].text
         assert "total_ms: 42" in text
+        mock_db.get_documents.assert_not_called()
 
 
 # --- get_document_context Tests ---
@@ -605,7 +675,7 @@ class TestQuickSearch:
         )
         doc = _make_document_row()
         doc.key_topics = ["testing", "quality"]
-        mock_db.get_document.return_value = doc
+        mock_db.get_documents.return_value = {"doc-1": doc}
 
         result = asyncio.run(_handle_quick_search(components, {"query": "test"}))
 
@@ -616,10 +686,12 @@ class TestQuickSearch:
         assert "Topics: testing, quality" in text
         assert "Path: /docs/test.pdf" in text
         assert "Modified: 2025-01-01T00:00:00" in text
+        mock_db.get_documents.assert_called_once_with(["doc-1"])
+        mock_db.get_document.assert_not_called()
 
     def test_no_results(self) -> None:
         """quick_search with no results returns appropriate message."""
-        components, _mock_db, mock_engine = _make_components()
+        components, mock_db, mock_engine = _make_components()
         mock_engine.async_search.return_value = RetrievalResult(
             hits=[], query_classification="broad"
         )
@@ -627,6 +699,7 @@ class TestQuickSearch:
         result = asyncio.run(_handle_quick_search(components, {"query": "nothing"}))
 
         assert "No matching documents found." in result[0].text
+        mock_db.get_documents.assert_not_called()
 
     def test_deduplicates_documents(self) -> None:
         """quick_search deduplicates multiple hits from same document."""
@@ -637,7 +710,7 @@ class TestQuickSearch:
             hits=[hit1, hit2],
             query_classification="broad",
         )
-        mock_db.get_document.return_value = _make_document_row()
+        mock_db.get_documents.return_value = {"doc-1": _make_document_row()}
 
         result = asyncio.run(_handle_quick_search(components, {"query": "test"}))
 
@@ -645,6 +718,8 @@ class TestQuickSearch:
         assert "Found 1 matching documents" in text
         # Should only have one document header
         assert text.count("## Test Document") == 1
+        mock_db.get_documents.assert_called_once_with(["doc-1"])
+        mock_db.get_document.assert_not_called()
 
     def test_passes_top_k(self) -> None:
         """quick_search passes top_k to engine."""

@@ -4,12 +4,14 @@ import asyncio
 import logging
 import re
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
 
 from rag.retrieval.engine import (
     RECENCY_MAX_BOOST,
+    RERANK_PAYLOAD_FIELDS,
     RRF_K,
     RetrievalEngine,
     apply_layer_weights,
@@ -25,6 +27,9 @@ from rag.types import (
     SearchFilters,
     SearchHit,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # --- Helpers ---
 
@@ -307,7 +312,10 @@ class TestApplyRecencyBoost:
 
 
 class TestRetrievalEngine:
-    def _build_engine(self) -> tuple[RetrievalEngine, MagicMock, MagicMock, MagicMock, MagicMock]:
+    def _build_engine(
+        self,
+        index_version_provider: Callable[[], str] | None = None,
+    ) -> tuple[RetrievalEngine, MagicMock, MagicMock, MagicMock, MagicMock]:
         vector_store = MagicMock()
         embedder = MagicMock()
         reranker = MagicMock()
@@ -320,6 +328,7 @@ class TestRetrievalEngine:
             citation_assembler=citation_assembler,
             top_k_candidates=30,
             top_k_final=10,
+            index_version_provider=index_version_provider,
         )
         return engine, vector_store, embedder, reranker, citation_assembler
 
@@ -334,6 +343,7 @@ class TestRetrievalEngine:
         embedder.embed_query.return_value = [0.1] * 1024
         vs.query_dense.return_value = []
         vs.query_keyword.return_value = []
+        vs.get_hits_by_ids.return_value = {}
         reranker.rerank.return_value = []
         citations.assemble_citations.return_value = []
 
@@ -348,6 +358,7 @@ class TestRetrievalEngine:
         keyword_hits = [_make_hit("k1")]
         vs.query_dense.return_value = dense_hits
         vs.query_keyword.return_value = keyword_hits
+        vs.get_hits_by_ids.return_value = {}
 
         reranked = [_make_hit("d1")]
         reranker.rerank.return_value = reranked
@@ -383,6 +394,150 @@ class TestRetrievalEngine:
             (RecordType.SECTION_SUMMARY, 20),
             (RecordType.CHUNK, 30),
         }
+        for call in calls:
+            assert call[0][4] == RERANK_PAYLOAD_FIELDS
+
+        assert vs.query_keyword.call_args[0][3] == RERANK_PAYLOAD_FIELDS
+
+    def test_final_hits_are_hydrated_before_citations(self) -> None:
+        """Only final reranked hits are hydrated with full payloads."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+
+        embedder.embed_query.return_value = [0.1] * 1024
+        light_hit = _make_hit(
+            "d1",
+            text="light text",
+            record_type=RecordType.CHUNK,
+        )
+        light_hit.payload = {
+            "record_type": "chunk",
+            "doc_id": "doc1",
+            "text": "light text",
+        }
+        hydrated_hit = _make_hit(
+            "d1",
+            text="full text",
+            record_type=RecordType.CHUNK,
+        )
+        hydrated_hit.payload["page_start"] = 7
+
+        vs.query_dense.return_value = [light_hit]
+        vs.query_keyword.return_value = []
+        reranker.rerank.return_value = [light_hit]
+        vs.get_hits_by_ids.return_value = {"d1": hydrated_hit}
+        citations.assemble_citations.return_value = [_make_cited(hydrated_hit)]
+
+        engine.search("test query")
+
+        vs.get_hits_by_ids.assert_called_once_with(["d1"])
+        citation_hits = citations.assemble_citations.call_args[0][0]
+        assert citation_hits[0].text == "full text"
+        assert citation_hits[0].score == light_hit.score
+        assert citation_hits[0].payload["page_start"] == 7
+
+    def test_repeated_search_uses_exact_result_cache(self) -> None:
+        """Identical non-debug searches avoid expensive pipeline stages."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+
+        embedder.embed_query.return_value = [0.1] * 1024
+        hit = _make_hit("d1")
+        vs.query_dense.return_value = [hit]
+        vs.query_keyword.return_value = []
+        reranker.rerank.return_value = [hit]
+        vs.get_hits_by_ids.return_value = {"d1": hit}
+        citations.assemble_citations.return_value = [_make_cited(hit)]
+
+        first = engine.search("test query")
+        second = engine.search("test query")
+
+        assert first == second
+        embedder.embed_query.assert_called_once_with("test query")
+        assert vs.query_dense.call_count == 3
+        vs.query_keyword.assert_called_once()
+        reranker.rerank.assert_called_once()
+        vs.get_hits_by_ids.assert_called_once_with(["d1"])
+        citations.assemble_citations.assert_called_once()
+
+    def test_cache_key_includes_top_k(self) -> None:
+        """Different top_k values do not share cached results."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+
+        embedder.embed_query.return_value = [0.1] * 1024
+        hit = _make_hit("d1")
+        vs.query_dense.return_value = [hit]
+        vs.query_keyword.return_value = []
+        reranker.rerank.return_value = [hit]
+        vs.get_hits_by_ids.return_value = {"d1": hit}
+        citations.assemble_citations.return_value = [_make_cited(hit)]
+
+        engine.search("test query", top_k=1)
+        engine.search("test query", top_k=2)
+
+        assert embedder.embed_query.call_count == 2
+        assert reranker.rerank.call_count == 2
+
+    def test_cache_invalidation_reruns_search(self) -> None:
+        """Cache invalidation clears cached results after index changes."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+
+        embedder.embed_query.return_value = [0.1] * 1024
+        hit = _make_hit("d1")
+        vs.query_dense.return_value = [hit]
+        vs.query_keyword.return_value = []
+        reranker.rerank.return_value = [hit]
+        vs.get_hits_by_ids.return_value = {"d1": hit}
+        citations.assemble_citations.return_value = [_make_cited(hit)]
+
+        engine.search("test query")
+        engine.search("test query")
+        engine.invalidate_cache("after-index-update")
+        engine.search("test query")
+
+        assert embedder.embed_query.call_count == 2
+        assert reranker.rerank.call_count == 2
+
+    def test_cache_provider_change_reruns_search(self) -> None:
+        """External index fingerprint changes invalidate cached exact results."""
+        index_version = "v1"
+
+        def current_index_version() -> str:
+            return index_version
+
+        engine, vs, embedder, reranker, citations = self._build_engine(current_index_version)
+
+        embedder.embed_query.return_value = [0.1] * 1024
+        hit = _make_hit("d1")
+        vs.query_dense.return_value = [hit]
+        vs.query_keyword.return_value = []
+        reranker.rerank.return_value = [hit]
+        vs.get_hits_by_ids.return_value = {"d1": hit}
+        citations.assemble_citations.return_value = [_make_cited(hit)]
+
+        engine.search("test query")
+        engine.search("test query")
+        index_version = "v2"
+        engine.search("test query")
+
+        assert embedder.embed_query.call_count == 2
+        assert reranker.rerank.call_count == 2
+
+    def test_debug_searches_are_not_cached(self) -> None:
+        """Debug searches keep live timing and diagnostic data."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+
+        embedder.embed_query.return_value = [0.1] * 1024
+        hit = _make_hit("d1")
+        vs.query_dense.return_value = [hit]
+        vs.query_keyword.return_value = []
+        reranker.rerank.return_value = [hit]
+        vs.get_hits_by_ids.return_value = {"d1": hit}
+        citations.assemble_citations.return_value = [_make_cited(hit)]
+
+        engine.search("test query", debug=True)
+        engine.search("test query", debug=True)
+
+        assert embedder.embed_query.call_count == 2
+        assert reranker.rerank.call_count == 2
 
     def test_filters_passed_through(self) -> None:
         """Explicit filters are forwarded to vector store."""
@@ -444,6 +599,78 @@ class TestRetrievalEngine:
 
         reranker_call_top_k = reranker.rerank.call_args[0][2]
         assert reranker_call_top_k == 5
+
+    def test_exact_cache_reuses_identical_result_without_expensive_stages(self) -> None:
+        """Repeated exact searches skip embed, prefetch, rerank, hydrate, and citations."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+
+        hit = _make_hit("d1")
+        cited = [_make_cited(hit)]
+        embedder.embed_query.return_value = [0.1] * 1024
+        vs.query_dense.return_value = [hit]
+        vs.query_keyword.return_value = []
+        vs.get_hits_by_ids.return_value = {"d1": hit}
+        reranker.rerank.return_value = [hit]
+        citations.assemble_citations.return_value = cited
+
+        first = engine.search("test query")
+        second = engine.search("test query")
+
+        assert second == first
+        assert second is not first
+        embedder.embed_query.assert_called_once_with("test query")
+        assert vs.query_dense.call_count == 3
+        vs.query_keyword.assert_called_once()
+        vs.get_hits_by_ids.assert_called_once_with(["d1"])
+        reranker.rerank.assert_called_once()
+        citations.assemble_citations.assert_called_once()
+
+    def test_exact_cache_keeps_different_filters_separate(self) -> None:
+        """Different filters do not collide in the exact result cache."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+        self._setup_mocks(vs, embedder, reranker, citations)
+
+        engine.search("test query", filters=SearchFilters(folder_filter="/a"))
+        engine.search("test query", filters=SearchFilters(folder_filter="/b"))
+
+        assert embedder.embed_query.call_count == 2
+        assert vs.query_dense.call_count == 6
+        assert vs.query_keyword.call_count == 2
+        assert reranker.rerank.call_count == 2
+        assert citations.assemble_citations.call_count == 2
+        keyword_filters = [call.args[1].folder_filter for call in vs.query_keyword.call_args_list]
+        assert keyword_filters == ["/a", "/b"]
+
+    def test_exact_cache_keeps_different_top_k_separate(self) -> None:
+        """Different top_k values do not collide in the exact result cache."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+        self._setup_mocks(vs, embedder, reranker, citations)
+
+        engine.search("test query", top_k=5)
+        engine.search("test query", top_k=6)
+
+        assert embedder.embed_query.call_count == 2
+        assert vs.query_dense.call_count == 6
+        assert vs.query_keyword.call_count == 2
+        assert reranker.rerank.call_count == 2
+        assert citations.assemble_citations.call_count == 2
+        reranker_top_ks = [call.args[2] for call in reranker.rerank.call_args_list]
+        assert reranker_top_ks == [5, 6]
+
+    def test_invalidate_cache_reruns_expensive_stages(self) -> None:
+        """Index-version invalidation clears cached exact results conservatively."""
+        engine, vs, embedder, reranker, citations = self._build_engine()
+        self._setup_mocks(vs, embedder, reranker, citations)
+
+        engine.search("test query")
+        engine.invalidate_cache(index_version="after-index-update")
+        engine.search("test query")
+
+        assert embedder.embed_query.call_count == 2
+        assert vs.query_dense.call_count == 6
+        assert vs.query_keyword.call_count == 2
+        assert reranker.rerank.call_count == 2
+        assert citations.assemble_citations.call_count == 2
 
     def test_query_classification_in_result(self) -> None:
         """Result includes query classification."""

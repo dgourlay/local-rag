@@ -3,15 +3,12 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from rag.config import SummarizationConfig
 from rag.pipeline.summarizer import (
     BATCH_SECTION_PROMPT_TEMPLATE,
     COMBINED_PROMPT_TEMPLATE,
     MAX_EXCERPT_CHARS,
     CliSummarizer,
-    _COMBINED_PROMPT_CHAR_LIMIT,
     _extract_json,
     _format_sections_text,
 )
@@ -19,7 +16,6 @@ from rag.results import (
     CombinedSummaryError,
     CombinedSummarySuccess,
 )
-
 
 # --- Helpers ---
 
@@ -178,15 +174,17 @@ class TestSummarizeCombined:
     @patch.object(CliSummarizer, "available", new_callable=lambda: property(lambda self: True))
     def test_split_call_over_threshold(self, _avail: object, mock_cli: MagicMock) -> None:
         """Over char limit, uses doc summary + batch sections."""
-        doc_json = json.dumps({
-            "summary_8w": "Short",
-            "summary_16w": "Medium sentence.",
-            "summary_32w": "Moderate summary.",
-            "summary_64w": "Extended summary.",
-            "summary_128w": "Detailed summary.",
-            "key_topics": ["t1"],
-            "doc_type_guess": "report",
-        })
+        doc_json = json.dumps(
+            {
+                "summary_8w": "Short",
+                "summary_16w": "Medium sentence.",
+                "summary_32w": "Moderate summary.",
+                "summary_64w": "Extended summary.",
+                "summary_128w": "Detailed summary.",
+                "key_topics": ["t1"],
+                "doc_type_guess": "report",
+            }
+        )
         batch_json = _make_batch_sections_json(2)
         # Return doc_json for first call, then batch_json for all subsequent
         mock_cli.side_effect = [doc_json] + [batch_json] * 10
@@ -225,7 +223,9 @@ class TestSummarizeCombined:
     @patch.object(CliSummarizer, "_run_cli")
     @patch.object(CliSummarizer, "available", new_callable=lambda: property(lambda self: True))
     def test_partial_json_missing_fields_returns_error(
-        self, _avail: object, mock_cli: MagicMock,
+        self,
+        _avail: object,
+        mock_cli: MagicMock,
     ) -> None:
         """JSON is valid but missing required fields."""
         mock_cli.return_value = json.dumps({"summary_8w": "Short"})
@@ -238,7 +238,9 @@ class TestSummarizeCombined:
     @patch.object(CliSummarizer, "_run_cli")
     @patch.object(CliSummarizer, "available", new_callable=lambda: property(lambda self: True))
     def test_combined_json_in_markdown_fence(
-        self, _avail: object, mock_cli: MagicMock,
+        self,
+        _avail: object,
+        mock_cli: MagicMock,
     ) -> None:
         mock_cli.return_value = f"```json\n{_make_combined_json(1)}\n```"
         summarizer = _make_summarizer()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import socket
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from qdrant_client import AsyncQdrantClient, QdrantClient, models
 
@@ -24,6 +26,38 @@ _KEYWORD_INDEX_FIELDS: list[str] = [
 
 _VECTOR_DIM = 1024
 _COLLECTION_DISTANCE = models.Distance.COSINE
+_GRPC_CONNECT_TIMEOUT_SECONDS = 0.25
+
+
+def _qdrant_grpc_host(url: str) -> str:
+    """Extract the host used for validating the configured gRPC port."""
+    parsed = urlparse(url)
+    if parsed.hostname is not None:
+        return parsed.hostname
+
+    parsed_without_scheme = urlparse(f"//{url}")
+    if parsed_without_scheme.hostname is not None:
+        return parsed_without_scheme.hostname
+
+    return url
+
+
+def _grpc_port_available(url: str, grpc_port: int) -> bool:
+    """Return whether Qdrant's configured gRPC socket accepts connections."""
+    host = _qdrant_grpc_host(url)
+    try:
+        with socket.create_connection(
+            (host, grpc_port),
+            timeout=_GRPC_CONNECT_TIMEOUT_SECONDS,
+        ):
+            return True
+    except OSError:
+        return False
+
+
+def _resolve_prefer_grpc(config: QdrantConfig) -> bool:
+    """Use gRPC only when requested and the configured gRPC port is reachable."""
+    return config.prefer_grpc and _grpc_port_available(config.url, config.grpc_port)
 
 
 def _build_filter(
@@ -91,6 +125,22 @@ def _scored_point_to_search_hit(point: models.ScoredPoint) -> SearchHit:
     )
 
 
+def _record_to_search_hit(record: models.Record) -> SearchHit:
+    """Convert a retrieved Qdrant Record to a SearchHit without a search score."""
+    from rag.types import RecordType
+    from rag.types import SearchHit as SearchHitModel
+
+    payload: dict[str, Any] = record.payload or {}
+    return SearchHitModel(
+        point_id=str(record.id),
+        score=0.0,
+        record_type=RecordType(payload.get("record_type", "chunk")),
+        doc_id=payload.get("doc_id", ""),
+        text=payload.get("text", ""),
+        payload=payload,
+    )
+
+
 class QdrantVectorStore:
     """Sync Qdrant vector store implementing the VectorStore protocol."""
 
@@ -98,7 +148,7 @@ class QdrantVectorStore:
         self._client = QdrantClient(
             url=config.url,
             grpc_port=config.grpc_port,
-            prefer_grpc=config.prefer_grpc,
+            prefer_grpc=_resolve_prefer_grpc(config),
             check_compatibility=False,
         )
         self._collection = config.collection
@@ -227,6 +277,7 @@ class QdrantVectorStore:
         filters: SearchFilters,
         limit: int,
         record_type: str | None = None,
+        payload_fields: list[str] | None = None,
     ) -> list[SearchHit]:
         """Dense vector search using query_points() API."""
         query_filter = _build_filter(filters, record_type=record_type)
@@ -236,12 +287,18 @@ class QdrantVectorStore:
             query=vector,
             query_filter=query_filter,
             limit=limit,
-            with_payload=True,
+            with_payload=payload_fields if payload_fields is not None else True,
         )
 
         return [_scored_point_to_search_hit(p) for p in response.points]
 
-    def query_keyword(self, query: str, filters: SearchFilters, limit: int) -> list[SearchHit]:
+    def query_keyword(
+        self,
+        query: str,
+        filters: SearchFilters,
+        limit: int,
+        payload_fields: list[str] | None = None,
+    ) -> list[SearchHit]:
         """Keyword search using text index via query_points()."""
         text_condition = models.FieldCondition(
             key="text",
@@ -286,10 +343,23 @@ class QdrantVectorStore:
             collection_name=self._collection,
             query_filter=combined_filter,
             limit=limit,
-            with_payload=True,
+            with_payload=payload_fields if payload_fields is not None else True,
         )
 
         return [_scored_point_to_search_hit(p) for p in response.points]
+
+    def get_hits_by_ids(self, point_ids: list[str]) -> dict[str, SearchHit]:
+        """Fetch full payloads for known point IDs."""
+        if not point_ids:
+            return {}
+
+        records = self._client.retrieve(
+            collection_name=self._collection,
+            ids=point_ids,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return {str(record.id): _record_to_search_hit(record) for record in records}
 
     def close(self) -> None:
         """Close the underlying client."""
@@ -303,7 +373,7 @@ class AsyncQdrantVectorStore:
         self._client = AsyncQdrantClient(
             url=config.url,
             grpc_port=config.grpc_port,
-            prefer_grpc=config.prefer_grpc,
+            prefer_grpc=_resolve_prefer_grpc(config),
             check_compatibility=False,
         )
         self._collection = config.collection
@@ -425,6 +495,7 @@ class AsyncQdrantVectorStore:
         filters: SearchFilters,
         limit: int,
         record_type: str | None = None,
+        payload_fields: list[str] | None = None,
     ) -> list[SearchHit]:
         """Dense vector search using query_points() API."""
         query_filter = _build_filter(filters, record_type=record_type)
@@ -434,13 +505,17 @@ class AsyncQdrantVectorStore:
             query=vector,
             query_filter=query_filter,
             limit=limit,
-            with_payload=True,
+            with_payload=payload_fields if payload_fields is not None else True,
         )
 
         return [_scored_point_to_search_hit(p) for p in response.points]
 
     async def query_keyword(
-        self, query: str, filters: SearchFilters, limit: int
+        self,
+        query: str,
+        filters: SearchFilters,
+        limit: int,
+        payload_fields: list[str] | None = None,
     ) -> list[SearchHit]:
         """Keyword search using text index via query_points()."""
         text_condition = models.FieldCondition(
@@ -486,10 +561,23 @@ class AsyncQdrantVectorStore:
             collection_name=self._collection,
             query_filter=combined_filter,
             limit=limit,
-            with_payload=True,
+            with_payload=payload_fields if payload_fields is not None else True,
         )
 
         return [_scored_point_to_search_hit(p) for p in response.points]
+
+    async def get_hits_by_ids(self, point_ids: list[str]) -> dict[str, SearchHit]:
+        """Fetch full payloads for known point IDs."""
+        if not point_ids:
+            return {}
+
+        records = await self._client.retrieve(
+            collection_name=self._collection,
+            ids=point_ids,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return {str(record.id): _record_to_search_hit(record) for record in records}
 
     async def close(self) -> None:
         """Close the underlying client."""

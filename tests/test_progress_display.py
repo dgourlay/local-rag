@@ -105,6 +105,7 @@ class TestProgressDisplay:
         d = _ProgressDisplay(total=5)
         d._start_times[1] = time.monotonic() - 8.1
         import io
+
         buf = io.StringIO()
         with patch("click.echo", side_effect=lambda msg, **kw: buf.write(str(msg) + "\n")):
             d.on_status(1, 5, "test.pdf", "summarizing (3 sections)...")

@@ -160,6 +160,23 @@ class TestDocuments:
     def test_get_nonexistent(self, db: SqliteMetadataDB) -> None:
         assert db.get_document("nonexistent") is None
 
+    def test_get_documents_batch(self, db: SqliteMetadataDB) -> None:
+        db.upsert_document(
+            self._make_document(doc_id="d1", file_path="/docs/a.pdf", title="Doc A")
+        )
+        db.upsert_document(
+            self._make_document(doc_id="d2", file_path="/docs/b.pdf", title="Doc B")
+        )
+
+        result = db.get_documents(["d2", "missing", "d1", "d1"])
+
+        assert set(result) == {"d1", "d2"}
+        assert result["d1"].title == "Doc A"
+        assert result["d2"].title == "Doc B"
+
+    def test_get_documents_batch_empty(self, db: SqliteMetadataDB) -> None:
+        assert db.get_documents([]) == {}
+
     def test_get_by_hash(self, db: SqliteMetadataDB) -> None:
         db.upsert_document(self._make_document())
         result = db.get_document_by_hash("def456")
@@ -180,6 +197,41 @@ class TestDocuments:
         db.upsert_document(self._make_document())
         assert db.get_document_count() == 1
 
+    def test_index_fingerprint_changes_with_index_state(self, db: SqliteMetadataDB) -> None:
+        before = db.get_index_fingerprint()
+
+        db.upsert_document(self._make_document(summary_content_hash="summary-v1"))
+        db.insert_chunks(
+            [
+                ChunkRow(
+                    chunk_id="chunk-1",
+                    doc_id="doc-1",
+                    chunk_order=0,
+                    chunk_text="Chunk text",
+                    chunk_text_normalized="chunk text",
+                )
+            ]
+        )
+        db.log_processing(
+            ProcessingLogEntry(
+                doc_id="doc-1",
+                file_path="/docs/test.pdf",
+                stage="index",
+                status="success",
+            )
+        )
+
+        after = db.get_index_fingerprint()
+
+        assert before != after
+        assert "docs=1" in after
+        assert "chunks=1" in after
+        assert "log=1" in after
+        assert "modified=2026-01-01T00:00:00" in after
+        assert "raw=abc123" in after
+        assert "normalized=def456" in after
+        assert "summary=summary-v1" in after
+
     def test_recent_documents(self, db: SqliteMetadataDB) -> None:
         db.upsert_document(self._make_document(doc_id="d1", file_path="/a.pdf"))
         db.upsert_document(self._make_document(doc_id="d2", file_path="/b.pdf"))
@@ -199,10 +251,12 @@ class TestDocuments:
 
 
 class TestSections:
-    def _setup_doc(self, db: SqliteMetadataDB) -> None:
+    def _setup_doc(
+        self, db: SqliteMetadataDB, doc_id: str = "doc-1", file_path: str = "/docs/test.pdf"
+    ) -> None:
         doc = DocumentRow(
-            doc_id="doc-1",
-            file_path="/docs/test.pdf",
+            doc_id=doc_id,
+            file_path=file_path,
             folder_path="/docs",
             folder_ancestors=["/docs"],
             file_type="pdf",
@@ -238,10 +292,12 @@ class TestSections:
 
 
 class TestChunks:
-    def _setup_doc(self, db: SqliteMetadataDB) -> None:
+    def _setup_doc(
+        self, db: SqliteMetadataDB, doc_id: str = "doc-1", file_path: str = "/docs/test.pdf"
+    ) -> None:
         doc = DocumentRow(
-            doc_id="doc-1",
-            file_path="/docs/test.pdf",
+            doc_id=doc_id,
+            file_path=file_path,
             folder_path="/docs",
             folder_ancestors=["/docs"],
             file_type="pdf",
@@ -250,10 +306,14 @@ class TestChunks:
         )
         db.upsert_document(doc)
 
-    def _make_chunk(self, order: int) -> ChunkRow:
+    def _make_chunk(
+        self, order: int, doc_id: str = "doc-1", section_id: str | None = None
+    ) -> ChunkRow:
+        chunk_id = f"chunk-{order}" if doc_id == "doc-1" else f"{doc_id}-chunk-{order}"
         return ChunkRow(
-            chunk_id=f"chunk-{order}",
-            doc_id="doc-1",
+            chunk_id=chunk_id,
+            doc_id=doc_id,
+            section_id=section_id,
             chunk_order=order,
             chunk_text=f"Text for chunk {order}",
             chunk_text_normalized=f"text for chunk {order}",
@@ -267,6 +327,44 @@ class TestChunks:
         result = db.get_chunks("doc-1")
         assert len(result) == 2
         assert result[0].chunk_order == 0
+
+    def test_get_chunks_by_documents_batch(self, db: SqliteMetadataDB) -> None:
+        self._setup_doc(db)
+        self._setup_doc(db, doc_id="doc-2", file_path="/docs/other.pdf")
+        db.insert_chunks(
+            [
+                self._make_chunk(2),
+                self._make_chunk(0),
+                self._make_chunk(1),
+                self._make_chunk(1, doc_id="doc-2"),
+                self._make_chunk(0, doc_id="doc-2"),
+            ]
+        )
+
+        result = db.get_chunks_by_documents(["doc-2", "missing", "doc-1"])
+
+        assert [chunk.chunk_order for chunk in result["doc-1"]] == [0, 1, 2]
+        assert [chunk.chunk_order for chunk in result["doc-2"]] == [0, 1]
+        assert result["missing"] == []
+
+    def test_get_chunks_by_documents_batch_with_limit(self, db: SqliteMetadataDB) -> None:
+        self._setup_doc(db)
+        self._setup_doc(db, doc_id="doc-2", file_path="/docs/other.pdf")
+        db.insert_chunks(
+            [
+                self._make_chunk(0),
+                self._make_chunk(1),
+                self._make_chunk(2),
+                self._make_chunk(0, doc_id="doc-2"),
+                self._make_chunk(1, doc_id="doc-2"),
+                self._make_chunk(2, doc_id="doc-2"),
+            ]
+        )
+
+        result = db.get_chunks_by_documents(["doc-1", "doc-2"], limit_per_doc=2)
+
+        assert [chunk.chunk_order for chunk in result["doc-1"]] == [0, 1]
+        assert [chunk.chunk_order for chunk in result["doc-2"]] == [0, 1]
 
     def test_get_chunk(self, db: SqliteMetadataDB) -> None:
         self._setup_doc(db)
@@ -301,6 +399,38 @@ class TestChunks:
         assert len(adjacent) == 2
         orders = [c.chunk_order for c in adjacent]
         assert orders == [0, 1]
+
+    def test_get_chunks_by_sections_batch(self, db: SqliteMetadataDB) -> None:
+        self._setup_doc(db)
+        db.insert_chunks(
+            [
+                self._make_chunk(1, section_id="sec-1"),
+                self._make_chunk(0, section_id="sec-1"),
+                self._make_chunk(2, section_id="sec-2"),
+            ]
+        )
+
+        result = db.get_chunks_by_sections(["sec-2", "missing", "sec-1"])
+
+        assert [chunk.chunk_order for chunk in result["sec-1"]] == [0, 1]
+        assert [chunk.chunk_order for chunk in result["sec-2"]] == [2]
+        assert result["missing"] == []
+
+    def test_get_adjacent_chunks_batch(self, db: SqliteMetadataDB) -> None:
+        self._setup_doc(db)
+        self._setup_doc(db, doc_id="doc-2", file_path="/docs/other.pdf")
+        db.insert_chunks(
+            [self._make_chunk(i) for i in range(5)]
+            + [self._make_chunk(i, doc_id="doc-2") for i in range(3)]
+        )
+
+        result = db.get_adjacent_chunks_batch(
+            [("doc-1", 2), ("doc-2", 0), ("missing", 0)], window=1
+        )
+
+        assert [chunk.chunk_order for chunk in result[("doc-1", 2)]] == [1, 2, 3]
+        assert [chunk.chunk_order for chunk in result[("doc-2", 0)]] == [0, 1]
+        assert result[("missing", 0)] == []
 
 
 class TestProcessingLog:

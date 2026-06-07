@@ -5,7 +5,8 @@ import uuid
 import pytest
 from qdrant_client import QdrantClient
 
-from rag.db.qdrant import QdrantVectorStore
+from rag.config import QdrantConfig
+from rag.db.qdrant import QdrantVectorStore, _resolve_prefer_grpc
 from rag.types import (
     FileType,
     QdrantPayloadModel,
@@ -15,6 +16,19 @@ from rag.types import (
 )
 
 COLLECTION = "test_documents"
+
+
+class _FakeSocket:
+    def __enter__(self) -> _FakeSocket:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object,
+    ) -> None:
+        return None
 
 
 def _make_store() -> QdrantVectorStore:
@@ -49,6 +63,108 @@ def _make_point(
             text=text,
         ),
     )
+
+
+class TestGrpcTransportFallback:
+    def test_prefer_grpc_false_skips_socket_probe(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def fail_create_connection(address: tuple[str, int], timeout: float) -> _FakeSocket:
+            raise AssertionError("socket probe should not run")
+
+        monkeypatch.setattr(
+            "rag.db.qdrant.socket.create_connection",
+            fail_create_connection,
+        )
+
+        config = QdrantConfig(prefer_grpc=False)
+
+        assert _resolve_prefer_grpc(config) is False
+
+    def test_prefer_grpc_uses_reachable_port(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_create_connection(address: tuple[str, int], timeout: float) -> _FakeSocket:
+            seen["address"] = address
+            seen["timeout"] = timeout
+            return _FakeSocket()
+
+        monkeypatch.setattr(
+            "rag.db.qdrant.socket.create_connection",
+            fake_create_connection,
+        )
+
+        config = QdrantConfig(
+            url="http://qdrant.local:6333",
+            grpc_port=6334,
+            prefer_grpc=True,
+        )
+
+        assert _resolve_prefer_grpc(config) is True
+        assert seen["address"] == ("qdrant.local", 6334)
+        assert seen["timeout"] == 0.25
+
+    def test_prefer_grpc_falls_back_when_port_unavailable(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def fake_create_connection(address: tuple[str, int], timeout: float) -> _FakeSocket:
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(
+            "rag.db.qdrant.socket.create_connection",
+            fake_create_connection,
+        )
+
+        config = QdrantConfig(prefer_grpc=True)
+
+        assert _resolve_prefer_grpc(config) is False
+
+    def test_constructor_passes_rest_fallback_to_client(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_create_connection(address: tuple[str, int], timeout: float) -> _FakeSocket:
+            raise OSError("connection refused")
+
+        class FakeQdrantClient:
+            def __init__(
+                self,
+                *,
+                url: str,
+                grpc_port: int,
+                prefer_grpc: bool,
+                check_compatibility: bool,
+            ) -> None:
+                captured["url"] = url
+                captured["grpc_port"] = grpc_port
+                captured["prefer_grpc"] = prefer_grpc
+                captured["check_compatibility"] = check_compatibility
+
+        monkeypatch.setattr(
+            "rag.db.qdrant.socket.create_connection",
+            fake_create_connection,
+        )
+        monkeypatch.setattr("rag.db.qdrant.QdrantClient", FakeQdrantClient)
+
+        config = QdrantConfig(
+            url="http://localhost:6333",
+            grpc_port=6334,
+            prefer_grpc=True,
+        )
+
+        QdrantVectorStore(config)
+
+        assert captured["url"] == "http://localhost:6333"
+        assert captured["grpc_port"] == 6334
+        assert captured["prefer_grpc"] is False
+        assert captured["check_compatibility"] is False
 
 
 class TestEnsureCollection:
@@ -106,6 +222,34 @@ class TestUpsertAndQueryDense:
     def test_empty_points_noop(self) -> None:
         store = _make_store()
         store.upsert_points("doc-1", [])  # should not raise
+
+    def test_query_dense_can_limit_payload_fields(self) -> None:
+        store = _make_store()
+        point = _make_point(str(uuid.uuid4()), text="machine learning algorithms")
+        store.upsert_points("doc-1", [point])
+
+        results = store.query_dense(
+            vector=point.vector,
+            filters=SearchFilters(),
+            limit=5,
+            payload_fields=["record_type", "doc_id", "text"],
+        )
+
+        assert len(results) == 1
+        assert results[0].text == "machine learning algorithms"
+        assert set(results[0].payload) == {"record_type", "doc_id", "text"}
+
+    def test_get_hits_by_ids_fetches_full_payload(self) -> None:
+        store = _make_store()
+        point_id = str(uuid.uuid4())
+        point = _make_point(point_id, text="machine learning algorithms")
+        store.upsert_points("doc-1", [point])
+
+        hits = store.get_hits_by_ids([point_id])
+
+        assert list(hits) == [point_id]
+        assert hits[point_id].text == "machine learning algorithms"
+        assert hits[point_id].payload["file_path"] == "/docs/test.pdf"
 
 
 class TestDeleteStalePoints:
@@ -175,6 +319,26 @@ class TestQueryKeyword:
             limit=10,
         )
         assert len(results) == 0
+
+    def test_query_keyword_can_limit_payload_fields(self) -> None:
+        store = _make_store()
+        store.upsert_points(
+            "doc-1",
+            [
+                _make_point(str(uuid.uuid4()), text="python programming language"),
+            ],
+        )
+
+        results = store.query_keyword(
+            query="programming",
+            filters=SearchFilters(),
+            limit=10,
+            payload_fields=["record_type", "doc_id", "text"],
+        )
+
+        assert len(results) == 1
+        assert results[0].text == "python programming language"
+        assert set(results[0].payload) == {"record_type", "doc_id", "text"}
 
 
 class TestFilterQueries:
@@ -362,7 +526,6 @@ class TestDateFilter:
         )
         assert len(results) == 1
         assert results[0].doc_id == "doc-recent"
-
 
     def test_date_filter_rejects_numeric_range(self) -> None:
         """Regression: models.Range rejects string dates, DatetimeRange is required."""

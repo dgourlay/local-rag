@@ -6,7 +6,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, TypedDict
 
 import click
 
@@ -16,6 +16,11 @@ if TYPE_CHECKING:
     from rag.pipeline.runner import PipelineRunner
     from rag.retrieval.engine import RetrievalEngine
     from rag.types import FileEvent
+
+
+class _McpTargetInfo(TypedDict):
+    cmd: str | None
+    label: str
 
 
 def _init_components(
@@ -69,6 +74,9 @@ def _init_components(
         citation_assembler=citations,
         top_k_candidates=config.reranker.top_k_candidates,
         top_k_final=config.reranker.top_k_final,
+        retrieval_config=config.retrieval,
+        summarization_config=config.summarization,
+        index_version_provider=db.get_index_fingerprint,
     )
 
     return db, runner, engine
@@ -96,7 +104,7 @@ def init(add_folder: str | None, set_llm: str | None) -> None:
     if add_folder is not None or set_llm is not None:
         # Non-interactive mode
         folders: list[str] = []
-        llm: str | None = set_llm
+        llm_cmd: str | None = set_llm
 
         # Load existing config folders if present
         if config_path.is_file():
@@ -105,8 +113,8 @@ def init(add_folder: str | None, set_llm: str | None) -> None:
             with open(config_path, "rb") as f:
                 existing = tomllib.load(f)
             folders = list(existing.get("folders", {}).get("paths", []))
-            if llm is None:
-                llm = existing.get("summarization", {}).get("command")
+            if llm_cmd is None:
+                llm_cmd = existing.get("summarization", {}).get("command")
 
         if add_folder is not None:
             resolved = str(Path(add_folder).expanduser().resolve())
@@ -117,7 +125,7 @@ def init(add_folder: str | None, set_llm: str | None) -> None:
             click.echo("Error: No folders configured. Use --add-folder.", err=True)
             raise SystemExit(1)
 
-        result = create_config(folders, llm, config_path)
+        result = create_config(folders, llm_cmd, config_path)
         click.echo(f"Config written to {result}")
         return
 
@@ -323,7 +331,8 @@ def _handle_reindex(target: str, config: AppConfig, folder: str | None) -> None:
             click.echo("Nothing to re-index — no documents in the index.")
             return
         click.echo(
-            f"This will purge and re-process all indexed data ({doc_count} documents, {sync_count} tracked files)."
+            "This will purge and re-process all indexed data "
+            f"({doc_count} documents, {sync_count} tracked files)."
         )
         if not click.confirm("Are you sure?"):
             click.echo("Aborted.")
@@ -362,17 +371,13 @@ def _handle_reindex(target: str, config: AppConfig, folder: str | None) -> None:
             (file_path,),
         ).fetchone()
         if row is None:
-            click.echo(
-                f"Error: {file_path} is not in the index.", err=True
-            )
+            click.echo(f"Error: {file_path} is not in the index.", err=True)
             raise SystemExit(1)
         conn.execute(
             "DELETE FROM document_hashes WHERE file_path = ?",
             (file_path,),
         )
-        conn.execute(
-            "DELETE FROM sync_state WHERE file_path = ?", (file_path,)
-        )
+        conn.execute("DELETE FROM sync_state WHERE file_path = ?", (file_path,))
         # Clean up chunks/sections for documents at this path
         doc_ids = [
             r[0]
@@ -382,15 +387,9 @@ def _handle_reindex(target: str, config: AppConfig, folder: str | None) -> None:
             ).fetchall()
         ]
         for doc_id in doc_ids:
-            conn.execute(
-                "DELETE FROM chunks WHERE doc_id = ?", (doc_id,)
-            )
-            conn.execute(
-                "DELETE FROM sections WHERE doc_id = ?", (doc_id,)
-            )
-        conn.execute(
-            "DELETE FROM documents WHERE file_path = ?", (file_path,)
-        )
+            conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
+            conn.execute("DELETE FROM sections WHERE doc_id = ?", (doc_id,))
+        conn.execute("DELETE FROM documents WHERE file_path = ?", (file_path,))
         conn.commit()
         click.echo(f"Cleared index state for {file_path}.")
         events = _single_file_events(file_path)
@@ -411,7 +410,7 @@ class _ProgressDisplay:
     _NAME_W = 55
     _HEARTBEAT_INTERVAL = 30  # seconds between heartbeat prints
 
-    _OUTCOME_LABELS: dict[str, tuple[str, str]] = {
+    _OUTCOME_LABELS: ClassVar[dict[str, tuple[str, str]]] = {
         "INDEXED": ("indexed", "green"),
         "UNCHANGED": ("unchanged", "yellow"),
         "DUPLICATE": ("duplicate", "yellow"),
@@ -426,11 +425,12 @@ class _ProgressDisplay:
         self._idx_w = len(str(total))
         self._start_times: dict[int, float] = {}
         # Heartbeat state: tracks files currently in-progress
-        self._active: dict[int, tuple[str, str]] = {}   # file_idx -> (fitted_name, status)
+        self._active: dict[int, tuple[str, str]] = {}  # file_idx -> (fitted_name, status)
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop, daemon=True,
+            target=self._heartbeat_loop,
+            daemon=True,
         )
         self._heartbeat_thread.start()
 
@@ -545,7 +545,12 @@ def _run_index(config: AppConfig, events: list[FileEvent]) -> None:
 
 @main.command()
 @click.option("--http", "use_http", is_flag=True, help="Use Streamable HTTP transport.")
-def serve(use_http: bool) -> None:
+@click.option(
+    "--preload",
+    is_flag=True,
+    help="Warm SQLite, Qdrant, embedder, and reranker before accepting MCP requests.",
+)
+def serve(use_http: bool, preload: bool) -> None:
     """Start MCP server (default: stdio)."""
     from rag.config import load_config
     from rag.mcp.server import run_http_server, run_stdio_server
@@ -557,7 +562,7 @@ def serve(use_http: bool) -> None:
             f"Starting MCP server (HTTP) on {config.mcp.host}:{config.mcp.port}",
             err=True,
         )
-        asyncio.run(run_http_server(config))
+        asyncio.run(run_http_server(config, preload=preload))
     else:
         # stdio mode: all output to stderr so stdout is clean for JSON-RPC
         logging.basicConfig(
@@ -565,7 +570,7 @@ def serve(use_http: bool) -> None:
             format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
             stream=sys.stderr,
         )
-        asyncio.run(run_stdio_server(config))
+        asyncio.run(run_stdio_server(config, preload=preload))
 
 
 @main.command()
@@ -854,10 +859,7 @@ def doctor() -> None:
         if shutil.which(cmd):
             click.echo(f"Questions: PASS (LLM CLI '{cmd}' available)")
         else:
-            click.echo(
-                f"Questions: WARN (LLM CLI '{cmd}' not found, "
-                "questions will be skipped)"
-            )
+            click.echo(f"Questions: WARN (LLM CLI '{cmd}' not found, questions will be skipped)")
     else:
         click.echo("Questions: SKIP (disabled in config)")
 
@@ -933,7 +935,7 @@ def _show_mcp_help() -> None:
     """Show MCP config help with auto-detected tools."""
     from shutil import which
 
-    targets = {
+    targets: dict[str, _McpTargetInfo] = {
         "claude-code": {"cmd": "claude", "label": "Claude Code"},
         "claude-desktop": {"cmd": None, "label": "Claude Desktop"},
         "kiro": {"cmd": "kiro", "label": "Kiro"},
@@ -943,18 +945,18 @@ def _show_mcp_help() -> None:
 
     detected = []
     for target, info in targets.items():
-        if info["cmd"] is not None and which(info["cmd"]):
-            detected.append(target)
-            click.echo(f"  rag mcp-config --install {target:<16} # {info['label']} (detected)")
-        elif target == "claude-desktop" and Path(
-            "~/Library/Application Support/Claude"
-        ).expanduser().exists():
+        cmd = info["cmd"]
+        is_detected = (cmd is not None and which(cmd) is not None) or (
+            target == "claude-desktop"
+            and Path("~/Library/Application Support/Claude").expanduser().exists()
+        )
+        if is_detected:
             detected.append(target)
             click.echo(f"  rag mcp-config --install {target:<16} # {info['label']} (detected)")
         else:
             click.echo(f"  rag mcp-config --install {target:<16} # {info['label']}")
 
-    click.echo(f"\n  rag mcp-config --print                   # print raw JSON config")
+    click.echo("\n  rag mcp-config --print                   # print raw JSON config")
 
     if detected:
         click.echo(f"\nDetected: {', '.join(targets[t]['label'] for t in detected)}")

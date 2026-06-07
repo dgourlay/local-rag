@@ -34,8 +34,16 @@ _CLI_PRESETS: dict[str, tuple[list[str], str]] = {
     "claude": (["--print"], "stdin"),
     "kiro-cli": (["chat", "--no-interactive", "--wrap", "never"], "arg"),
     "codex": (
-        ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
-         "-o", "/dev/stdout", "-"],
+        [
+            "exec",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "-o",
+            "/dev/stdout",
+            "-",
+        ],
         "stdin",
     ),
 }
@@ -46,6 +54,7 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 def get_cli_preset(command: str) -> tuple[list[str], str] | None:
     """Return (args, input_mode) preset for a known CLI tool, or None."""
     return _CLI_PRESETS.get(command)
+
 
 DOCUMENT_PROMPT_TEMPLATE = """\
 Analyze the following document and return a JSON object with these fields:
@@ -292,8 +301,7 @@ def _filter_incomplete_sections(parsed: dict[str, object]) -> None:
     sections = parsed.get("sections")
     if isinstance(sections, list):
         parsed["sections"] = [
-            s for s in sections
-            if isinstance(s, dict) and _SECTION_REQUIRED_KEYS.issubset(s)
+            s for s in sections if isinstance(s, dict) and _SECTION_REQUIRED_KEYS.issubset(s)
         ]
 
 
@@ -518,8 +526,7 @@ class CliSummarizer:
             return self._run_cli(prompt)
 
         futures = {
-            self._pool.submit(_run_section_batch, batch): idx
-            for idx, batch in enumerate(batches)
+            self._pool.submit(_run_section_batch, batch): idx for idx, batch in enumerate(batches)
         }
 
         for future in as_completed(futures):
@@ -655,7 +662,8 @@ class CliSummarizer:
         return chunks
 
     def _group_chunks_into_batches(
-        self, chunks: list[Chunk],
+        self,
+        chunks: list[Chunk],
     ) -> list[list[Chunk]]:
         """Group chunks into batches that fit under the char limit."""
         batches: list[list[Chunk]] = []

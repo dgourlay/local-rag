@@ -115,6 +115,8 @@ class TestDefaults:
         assert cfg.embedding.dimensions == 1024
         assert cfg.reranker.top_k_candidates == 30
         assert cfg.reranker.top_k_final == 10
+        assert cfg.retrieval.cache_enabled is True
+        assert cfg.retrieval.cache_max_entries == 128
         assert cfg.summarization.enabled is True
         assert cfg.summarization.command == "claude"
         assert cfg.mcp.transport == "stdio"

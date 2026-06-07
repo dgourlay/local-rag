@@ -3,13 +3,27 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_BROAD_KEYWORDS = frozenset({
-    "overview", "summary", "summarize", "general", "explain", "describe", "introduction",
-})
+_BROAD_KEYWORDS = frozenset(
+    {
+        "overview",
+        "summary",
+        "summarize",
+        "general",
+        "explain",
+        "describe",
+        "introduction",
+    }
+)
 
-_NAVIGATIONAL_KEYWORDS = frozenset({
-    "where", "find", "locate", "location", "path",
-})
+_NAVIGATIONAL_KEYWORDS = frozenset(
+    {
+        "where",
+        "find",
+        "locate",
+        "location",
+        "path",
+    }
+)
 
 # Regex patterns for code identifiers: snake_case, camelCase, dotted.paths
 _CODE_IDENT_RE = re.compile(r"[a-z]+_[a-z]|[a-z][A-Z]|[a-zA-Z]+\.[a-zA-Z]+")

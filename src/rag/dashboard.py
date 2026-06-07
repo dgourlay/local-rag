@@ -167,6 +167,7 @@ def _check_rag_direct(config: AppConfig) -> tuple[bool, str]:
             embedder=embedder,
             reranker=reranker,
             citation_assembler=citations,
+            index_version_provider=db.get_index_fingerprint,
         )
 
         t0 = time.monotonic()
@@ -244,9 +245,7 @@ def render_dashboard(conn: sqlite3.Connection, config: AppConfig) -> None:
     for subdir, count in disk_counts.items():
         for cfg_folder in resolved_configured:
             if subdir == cfg_folder or subdir.startswith(cfg_folder + os.sep):
-                disk_per_configured[cfg_folder] = (
-                    disk_per_configured.get(cfg_folder, 0) + count
-                )
+                disk_per_configured[cfg_folder] = disk_per_configured.get(cfg_folder, 0) + count
                 break
 
     type_rows: list[Any] = conn.execute(

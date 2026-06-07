@@ -59,9 +59,7 @@ class BackgroundUpsertWorker:
         self._pending.append(future)
         return future
 
-    def submit_delete_stale(
-        self, doc_id: str, keep_ids: set[str]
-    ) -> Future[None]:
+    def submit_delete_stale(self, doc_id: str, keep_ids: set[str]) -> Future[None]:
         """Submit an async delete_stale_points to the background loop."""
         if self._loop is None or self._thread is None or not self._thread.is_alive():
             msg = "BackgroundUpsertWorker is not running"

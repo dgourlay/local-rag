@@ -69,9 +69,7 @@ class OnnxReranker:
                 providers.append("CoreMLExecutionProvider")
                 logger.info("Using CoreMLExecutionProvider for reranker")
             else:
-                logger.info(
-                    "CoreML requested but not available, falling back to CPU"
-                )
+                logger.info("CoreML requested but not available, falling back to CPU")
         providers.append("CPUExecutionProvider")
         return providers
 

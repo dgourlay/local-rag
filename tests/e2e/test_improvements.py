@@ -24,7 +24,12 @@ from rag.db.qdrant import QdrantVectorStore
 from rag.pipeline.dedup import DedupChecker
 from rag.pipeline.parser.text_parser import TextParser
 from rag.pipeline.runner import PipelineRunner
-from rag.results import SectionSummarySuccess, SummarySuccess
+from rag.results import (
+    CombinedSectionSummary,
+    CombinedSummarySuccess,
+    SectionSummarySuccess,
+    SummarySuccess,
+)
 from rag.retrieval.citations import CitationAssembler
 from rag.retrieval.engine import RetrievalEngine
 from rag.sync.scanner import scan_folders
@@ -106,6 +111,37 @@ class FakeSummarizer:
             ),
             key_topics=["topic1", "topic2", "topic3"],
             doc_type_guess="document",
+        )
+
+    def summarize_combined(
+        self,
+        text: str,
+        title: str | None,
+        file_type: str,
+        sections: list[tuple[str | None, str]],
+    ) -> CombinedSummarySuccess:
+        doc = self.summarize_document(text, title, file_type)
+        section_summaries: list[CombinedSectionSummary] = []
+        for heading, section_text in sections:
+            section = self.summarize_section(section_text, heading, title or "document")
+            section_summaries.append(
+                CombinedSectionSummary(
+                    heading=heading,
+                    section_summary_8w=section.section_summary_8w,
+                    section_summary_32w=section.section_summary_32w,
+                    section_summary_128w=section.section_summary_128w,
+                )
+            )
+
+        return CombinedSummarySuccess(
+            summary_8w=doc.summary_8w,
+            summary_16w=doc.summary_16w,
+            summary_32w=doc.summary_32w,
+            summary_64w=doc.summary_64w,
+            summary_128w=doc.summary_128w,
+            key_topics=doc.key_topics,
+            doc_type_guess=doc.doc_type_guess,
+            sections=section_summaries,
         )
 
     def summarize_section(
@@ -379,7 +415,9 @@ class TestMCPTextFormat:
         doc_ids = {hit.citation.path for hit in result.hits}
         doc_lookup = {}
         for doc_id in doc_ids:
-            doc_lookup[doc_id] = metadata_db.get_document(doc_id)
+            doc = metadata_db.get_document(doc_id)
+            if doc is not None:
+                doc_lookup[doc_id] = doc
 
         text = _format_results_as_text(
             hits=result.hits,

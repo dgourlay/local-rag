@@ -59,12 +59,8 @@ class TestBackgroundUpsertWorker:
         assert mock_async_store.upsert_points.await_count == 5
         assert worker.pending_count == 0
 
-    def test_error_in_upsert_returned_by_wait_all(
-        self, mock_async_store: MagicMock
-    ) -> None:
-        mock_async_store.upsert_points = AsyncMock(
-            side_effect=RuntimeError("connection refused")
-        )
+    def test_error_in_upsert_returned_by_wait_all(self, mock_async_store: MagicMock) -> None:
+        mock_async_store.upsert_points = AsyncMock(side_effect=RuntimeError("connection refused"))
         w = BackgroundUpsertWorker(mock_async_store)
         w.start()
         try:
@@ -76,9 +72,7 @@ class TestBackgroundUpsertWorker:
         finally:
             w.stop()
 
-    def test_submit_after_stop_raises(
-        self, mock_async_store: MagicMock
-    ) -> None:
+    def test_submit_after_stop_raises(self, mock_async_store: MagicMock) -> None:
         w = BackgroundUpsertWorker(mock_async_store)
         w.start()
         w.stop()
@@ -86,17 +80,13 @@ class TestBackgroundUpsertWorker:
         with pytest.raises(RuntimeError, match="not running"):
             w.submit_upsert("doc-1", [MagicMock()])
 
-    def test_submit_before_start_raises(
-        self, mock_async_store: MagicMock
-    ) -> None:
+    def test_submit_before_start_raises(self, mock_async_store: MagicMock) -> None:
         w = BackgroundUpsertWorker(mock_async_store)
 
         with pytest.raises(RuntimeError, match="not running"):
             w.submit_upsert("doc-1", [MagicMock()])
 
-    def test_stop_is_idempotent(
-        self, mock_async_store: MagicMock
-    ) -> None:
+    def test_stop_is_idempotent(self, mock_async_store: MagicMock) -> None:
         w = BackgroundUpsertWorker(mock_async_store)
         w.start()
         w.stop()

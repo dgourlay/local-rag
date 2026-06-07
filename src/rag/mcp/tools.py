@@ -3,20 +3,27 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 import mcp.types as types
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from mcp.server import Server
 
     from rag.config import AppConfig
     from rag.db.models import SqliteMetadataDB
+    from rag.pipeline.embedder import SentenceTransformerEmbedder
     from rag.retrieval.engine import RetrievalEngine
+    from rag.retrieval.reranker import OnnxReranker
     from rag.types import CitedEvidence, DetailLevel, DocumentRow
 
 logger = logging.getLogger(__name__)
+
+_PRELOAD_QUERY = "local-rag warmup query"
 
 _DETAIL_SCHEMA: dict[str, object] = {
     "type": "string",
@@ -62,6 +69,10 @@ class _Components:
         self._config = config
         self._db: SqliteMetadataDB | None = None
         self._engine: RetrievalEngine | None = None
+        self._embedder: SentenceTransformerEmbedder | None = None
+        self._reranker: OnnxReranker | None = None
+        self._init_lock = threading.Lock()
+        self._preloaded = False
 
     def _init(self) -> None:
         from rag.db.connection import get_connection
@@ -93,22 +104,48 @@ class _Components:
             top_k_final=self._config.reranker.top_k_final,
             retrieval_config=self._config.retrieval,
             summarization_config=self._config.summarization,
+            index_version_provider=db.get_index_fingerprint,
         )
 
         self._db = db
         self._engine = engine
+        self._embedder = embedder
+        self._reranker = reranker
+
+    def _ensure_initialized(self) -> None:
+        """Initialize backend components once, preserving lazy default behavior."""
+        if self._db is not None and self._engine is not None:
+            return
+        with self._init_lock:
+            if self._db is None or self._engine is None:
+                self._init()
+
+    def preload(self) -> None:
+        """Initialize and warm components before accepting the first MCP search."""
+        with self._init_lock:
+            if self._db is None or self._engine is None:
+                self._init()
+            if self._preloaded:
+                return
+
+            assert self._db is not None
+            assert self._embedder is not None
+            assert self._reranker is not None
+
+            self._db.get_document_count()
+            self._embedder.embed_query(_PRELOAD_QUERY)
+            self._reranker._ensure_loaded()
+            self._preloaded = True
 
     @property
     def db(self) -> SqliteMetadataDB:
-        if self._db is None:
-            self._init()
+        self._ensure_initialized()
         assert self._db is not None
         return self._db
 
     @property
     def engine(self) -> RetrievalEngine:
-        if self._engine is None:
-            self._init()
+        self._ensure_initialized()
         assert self._engine is not None
         return self._engine
 
@@ -208,10 +245,10 @@ _TOOLS: list[types.Tool] = [
         name="list_recent_documents",
         description=(
             "List recently indexed documents sorted by modification date, with "
-            "titles and summaries. Use this to answer \"what's new?\" or \"what "
-            "changed recently?\" questions, or to browse the document collection "
+            'titles and summaries. Use this to answer "what\'s new?" or "what '
+            'changed recently?" questions, or to browse the document collection '
             "without a specific search query. Use folder_filter to scope to a "
-            'specific folder. The detail parameter controls summary length — use '
+            "specific folder. The detail parameter controls summary length — use "
             '"8w" for a quick list, "32w" or "64w" when the user wants to '
             "understand what each document covers. This tool does not perform any "
             "search — it simply lists documents by recency."
@@ -279,9 +316,13 @@ def _error_content(message: str) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=json.dumps({"error": message}))]
 
 
-def register_tools(server: Server, config: AppConfig) -> None:
+def register_tools(server: Server, config: AppConfig, *, preload: bool = False) -> None:
     """Register all MCP tools with the server."""
     components = _Components(config)
+    if preload:
+        logger.info("Preloading MCP backend components")
+        components.preload()
+        logger.info("Preloaded MCP backend components")
 
     @server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
     async def handle_list_tools() -> list[types.Tool]:
@@ -320,7 +361,7 @@ def _append_debug_info(lines: list[str], debug_info: dict[str, Any] | None) -> N
 
 def _format_results_as_text(
     hits: list[CitedEvidence],
-    doc_lookup: dict[str, DocumentRow | None],
+    doc_lookup: Mapping[str, DocumentRow],
     query_classification: str | None,
     debug_info: dict[str, Any] | None,
 ) -> str:
@@ -414,10 +455,8 @@ async def _handle_search(components: _Components, args: dict[str, Any]) -> list[
         return [types.TextContent(type="text", text=output.model_dump_json())]
 
     # Text format: fetch document info for summaries/topics
-    doc_ids = {hit.doc_id for hit in result.hits}
-    doc_lookup: dict[str, DocumentRow | None] = {}
-    for doc_id in doc_ids:
-        doc_lookup[doc_id] = await asyncio.to_thread(components.db.get_document, doc_id)
+    doc_ids = list(dict.fromkeys(hit.doc_id for hit in result.hits))
+    doc_lookup = await asyncio.to_thread(components.db.get_documents, doc_ids) if doc_ids else {}
 
     text = _format_results_as_text(
         hits=result.hits,
@@ -595,10 +634,13 @@ async def _handle_quick_search(
     seen_doc_ids = list(dict.fromkeys(hit.doc_id for hit in result.hits))
 
     # Fetch document details from SQLite
+    docs_by_id = (
+        await asyncio.to_thread(components.db.get_documents, seen_doc_ids) if seen_doc_ids else {}
+    )
     lines: list[str] = []
     doc_count = 0
     for doc_id in seen_doc_ids:
-        doc = await asyncio.to_thread(components.db.get_document, doc_id)
+        doc = docs_by_id.get(doc_id)
         if doc is None:
             continue
         doc_count += 1

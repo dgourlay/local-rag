@@ -243,8 +243,11 @@ class TestDoclingParserOcrConfig:
             "status": "success",
             "sections": [
                 {
-                    "heading": None, "order": 0, "text": "Text.",
-                    "page_start": None, "page_end": None,
+                    "heading": None,
+                    "order": 0,
+                    "text": "Text.",
+                    "page_start": None,
+                    "page_end": None,
                 }
             ],
             "title": "No OCR Doc",
@@ -266,8 +269,11 @@ class TestDoclingParserOcrConfig:
             "status": "success",
             "sections": [
                 {
-                    "heading": None, "order": 0, "text": "Text.",
-                    "page_start": None, "page_end": None,
+                    "heading": None,
+                    "order": 0,
+                    "text": "Text.",
+                    "page_start": None,
+                    "page_end": None,
                 }
             ],
             "title": "OCR Doc",
@@ -293,8 +299,11 @@ class TestContentHashPassthrough:
             "status": "success",
             "sections": [
                 {
-                    "heading": None, "order": 0, "text": "Text.",
-                    "page_start": None, "page_end": None,
+                    "heading": None,
+                    "order": 0,
+                    "text": "Text.",
+                    "page_start": None,
+                    "page_end": None,
                 }
             ],
             "title": "Hashed Doc",
@@ -303,7 +312,9 @@ class TestContentHashPassthrough:
         parser = DoclingParser()
         _patch_worker(parser, mock_result)
         result = parser.parse(
-            str(pdf_file), ocr_enabled=False, content_hash="precomputed_hash_abc",
+            str(pdf_file),
+            ocr_enabled=False,
+            content_hash="precomputed_hash_abc",
         )
 
         assert isinstance(result, ParseSuccess)
@@ -317,8 +328,11 @@ class TestContentHashPassthrough:
             "status": "success",
             "sections": [
                 {
-                    "heading": None, "order": 0, "text": "Text.",
-                    "page_start": None, "page_end": None,
+                    "heading": None,
+                    "order": 0,
+                    "text": "Text.",
+                    "page_start": None,
+                    "page_end": None,
                 }
             ],
             "title": "No Hash Doc",
@@ -339,7 +353,9 @@ class TestContentHashPassthrough:
 
         parser = TextParser()
         result = parser.parse(
-            str(txt_file), ocr_enabled=False, content_hash="precomputed_hash_xyz",
+            str(txt_file),
+            ocr_enabled=False,
+            content_hash="precomputed_hash_xyz",
         )
 
         assert isinstance(result, ParseSuccess)

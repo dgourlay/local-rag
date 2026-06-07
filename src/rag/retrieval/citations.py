@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -7,6 +8,13 @@ from rag.types import ChunkRow, Citation, CitedEvidence, SearchHit
 
 if TYPE_CHECKING:
     from rag.protocols import MetadataDB
+
+
+@dataclass(frozen=True, slots=True)
+class _CitationExpansionContext:
+    adjacent_by_center: dict[tuple[str, int], list[ChunkRow]] = field(default_factory=dict)
+    chunks_by_doc: dict[str, list[ChunkRow]] = field(default_factory=dict)
+    chunks_by_section: dict[str, list[ChunkRow]] = field(default_factory=dict)
 
 
 class CitationAssembler:
@@ -23,6 +31,9 @@ class CitationAssembler:
     ) -> list[CitedEvidence]:
         """Convert search hits to cited evidence with formatted citations."""
         results: list[CitedEvidence] = []
+        expansion_context = _CitationExpansionContext()
+        if expand_context and context_window > 0:
+            expansion_context = self._prefetch_expansion_context(hits, context_window)
 
         for hit in hits:
             payload = hit.payload
@@ -30,7 +41,7 @@ class CitationAssembler:
             # Build text with optional context expansion
             text = hit.text
             if expand_context and context_window > 0:
-                text = self._expand_context(hit, context_window)
+                text = self._expand_context(hit, expansion_context)
 
             # Build citation
             file_path = payload.get("file_path", "")
@@ -71,7 +82,47 @@ class CitationAssembler:
 
         return results
 
-    def _expand_context(self, hit: SearchHit, window: int) -> str:
+    def _prefetch_expansion_context(
+        self, hits: list[SearchHit], window: int
+    ) -> _CitationExpansionContext:
+        adjacent_centers: list[tuple[str, int]] = []
+        doc_summary_ids: list[str] = []
+        section_summary_ids: list[str] = []
+
+        for hit in hits:
+            chunk_order = hit.payload.get("chunk_order")
+            if isinstance(chunk_order, int) and not isinstance(chunk_order, bool):
+                adjacent_centers.append((hit.doc_id, chunk_order))
+                continue
+
+            record_type = hit.payload.get("record_type", "")
+            if record_type == "document_summary":
+                doc_summary_ids.append(hit.doc_id)
+            elif record_type == "section_summary":
+                section_id = hit.payload.get("section_id")
+                if isinstance(section_id, str):
+                    section_summary_ids.append(section_id)
+
+        adjacent_by_center = (
+            self._db.get_adjacent_chunks_batch(adjacent_centers, window)
+            if adjacent_centers
+            else {}
+        )
+        chunks_by_doc = (
+            self._db.get_chunks_by_documents(doc_summary_ids, limit_per_doc=3)
+            if doc_summary_ids
+            else {}
+        )
+        chunks_by_section = (
+            self._db.get_chunks_by_sections(section_summary_ids) if section_summary_ids else {}
+        )
+        return _CitationExpansionContext(
+            adjacent_by_center=adjacent_by_center,
+            chunks_by_doc=chunks_by_doc,
+            chunks_by_section=chunks_by_section,
+        )
+
+    def _expand_context(self, hit: SearchHit, expansion_context: _CitationExpansionContext) -> str:
         """Fetch adjacent chunks and merge text, deduplicating overlap.
 
         For summary hits (chunk_order is None), expands to grounded source text:
@@ -81,9 +132,9 @@ class CitationAssembler:
         chunk_order: int | None = hit.payload.get("chunk_order")
 
         if chunk_order is None:
-            return self._expand_summary_hit(hit)
+            return self._expand_summary_hit(hit, expansion_context)
 
-        adjacent: list[ChunkRow] = self._db.get_adjacent_chunks(hit.doc_id, chunk_order, window)
+        adjacent = expansion_context.adjacent_by_center.get((hit.doc_id, chunk_order), [])
         if not adjacent:
             return hit.text
 
@@ -94,12 +145,14 @@ class CitationAssembler:
         # Deduplicate overlapping content
         return self._merge_overlapping_texts(texts)
 
-    def _expand_summary_hit(self, hit: SearchHit) -> str:
+    def _expand_summary_hit(
+        self, hit: SearchHit, expansion_context: _CitationExpansionContext
+    ) -> str:
         """Expand a summary hit by fetching grounded source chunks."""
         record_type = hit.payload.get("record_type", "")
 
         if record_type == "document_summary":
-            chunks = self._db.get_chunks(hit.doc_id)[:3]
+            chunks = expansion_context.chunks_by_doc.get(hit.doc_id, [])
             if chunks:
                 chunk_texts = [c.chunk_text for c in chunks]
                 merged = self._merge_overlapping_texts(chunk_texts)
@@ -109,7 +162,7 @@ class CitationAssembler:
         if record_type == "section_summary":
             section_id: str | None = hit.payload.get("section_id")
             if section_id:
-                chunks = self._db.get_chunks_by_section(section_id)
+                chunks = expansion_context.chunks_by_section.get(section_id, [])
                 if chunks:
                     chunk_texts = [c.chunk_text for c in chunks]
                     merged = self._merge_overlapping_texts(chunk_texts)

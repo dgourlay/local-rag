@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import logging
 import multiprocessing
+import multiprocessing.context
 import uuid
 from pathlib import Path
 from typing import Any
@@ -17,9 +18,9 @@ ParseError.model_rebuild()
 
 logger = logging.getLogger(__name__)
 
-_PARSE_TIMEOUT_BASE = 60       # minimum seconds for any file
-_PARSE_TIMEOUT_PER_MB = 30     # additional seconds per megabyte
-_PARSE_TIMEOUT_CAP = 600       # hard upper limit
+_PARSE_TIMEOUT_BASE = 60  # minimum seconds for any file
+_PARSE_TIMEOUT_PER_MB = 30  # additional seconds per megabyte
+_PARSE_TIMEOUT_CAP = 600  # hard upper limit
 
 
 def _compute_parse_timeout(file_path: str) -> int:
@@ -186,7 +187,7 @@ class DoclingParser:
     """
 
     def __init__(self) -> None:
-        self._worker: multiprocessing.Process | None = None
+        self._worker: multiprocessing.context.SpawnProcess | None = None
         self._pipe: multiprocessing.connection.Connection | None = None
 
     @property
@@ -203,12 +204,17 @@ class DoclingParser:
 
         ctx = multiprocessing.get_context("spawn")
         parent_conn, child_conn = ctx.Pipe()
-        self._worker = ctx.Process(target=_worker_loop, args=(child_conn,), daemon=True)
-        self._worker.start()
+        worker = ctx.Process(
+            target=_worker_loop,
+            args=(child_conn,),
+            daemon=True,
+        )
+        worker.start()
         # Close the child end in the parent so only the worker holds it
         child_conn.close()
         self._pipe = parent_conn
-        logger.info("Started Docling worker process (pid=%s)", self._worker.pid)
+        self._worker = worker
+        logger.info("Started Docling worker process (pid=%s)", worker.pid)
         return self._pipe
 
     def _shutdown_worker(self) -> None:
@@ -259,7 +265,8 @@ class DoclingParser:
             if not pipe.poll(timeout=timeout):
                 logger.error(
                     "Docling worker timed out after %ds for %s",
-                    timeout, file_path,
+                    timeout,
+                    file_path,
                 )
                 self._shutdown_worker()
                 return ParseError(

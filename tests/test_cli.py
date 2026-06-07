@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -44,6 +44,51 @@ class TestHelp:
         assert result.exit_code == 0
         assert "--debug" in result.output
         assert "--top-k" in result.output
+
+    def test_serve_help(self, runner: CliRunner) -> None:
+        result = runner.invoke(main, ["serve", "--help"])
+        assert result.exit_code == 0
+        assert "--preload" in result.output
+
+
+class TestServe:
+    def test_serve_defaults_to_lazy_stdio(self, runner: CliRunner) -> None:
+        config = MagicMock()
+
+        with (
+            patch("rag.config.load_config", return_value=config),
+            patch("rag.mcp.server.run_stdio_server", new_callable=AsyncMock) as mock_stdio,
+        ):
+            result = runner.invoke(main, ["serve"])
+
+        assert result.exit_code == 0
+        mock_stdio.assert_awaited_once_with(config, preload=False)
+
+    def test_serve_preload_wires_stdio(self, runner: CliRunner) -> None:
+        config = MagicMock()
+
+        with (
+            patch("rag.config.load_config", return_value=config),
+            patch("rag.mcp.server.run_stdio_server", new_callable=AsyncMock) as mock_stdio,
+        ):
+            result = runner.invoke(main, ["serve", "--preload"])
+
+        assert result.exit_code == 0
+        mock_stdio.assert_awaited_once_with(config, preload=True)
+
+    def test_serve_preload_wires_http(self, runner: CliRunner) -> None:
+        config = MagicMock()
+        config.mcp.host = "127.0.0.1"
+        config.mcp.port = 8080
+
+        with (
+            patch("rag.config.load_config", return_value=config),
+            patch("rag.mcp.server.run_http_server", new_callable=AsyncMock) as mock_http,
+        ):
+            result = runner.invoke(main, ["serve", "--http", "--preload"])
+
+        assert result.exit_code == 0
+        mock_http.assert_awaited_once_with(config, preload=True)
 
 
 class TestMcpConfig:

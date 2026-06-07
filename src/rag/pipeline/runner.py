@@ -7,7 +7,6 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,13 +41,15 @@ from rag.types import (
 )
 
 if TYPE_CHECKING:
+    from concurrent.futures import Future
+
     from rag.config import AppConfig
     from rag.db.async_upsert import BackgroundUpsertWorker
     from rag.db.models import SqliteMetadataDB
     from rag.db.qdrant import AsyncQdrantVectorStore
     from rag.pipeline.dedup import DedupChecker
     from rag.protocols import Embedder, Parser, Summarizer, VectorStore
-    from rag.types import FileEvent
+    from rag.types import FileEvent, ParsedSection
 
 logger = logging.getLogger(__name__)
 
@@ -155,10 +156,7 @@ class PipelineRunner:
 
             # Check poison quarantine before processing
             existing_sync = self._db.get_sync_state(file_path)
-            if (
-                existing_sync is not None
-                and existing_sync.process_status == "poison"
-            ):
+            if existing_sync is not None and existing_sync.process_status == "poison":
                 return (
                     ProcessingOutcome.ERROR,
                     "quarantined \u2014 file failed 3+ times",
@@ -299,7 +297,8 @@ class PipelineRunner:
 
                 if isinstance(self._summarizer, CliSummarizer):
                     chunks = self._summarizer.generate_chunk_questions(
-                        chunks, parsed_doc.title,
+                        chunks,
+                        parsed_doc.title,
                     )
 
             # 9. Save chunks to DB
@@ -317,8 +316,7 @@ class PipelineRunner:
                     citation_label=c.citation_label,
                     token_count=c.token_count,
                     generated_questions=(
-                        json.dumps(c.generated_questions)
-                        if c.generated_questions else None
+                        json.dumps(c.generated_questions) if c.generated_questions else None
                     ),
                     embedding_model_version=self._embedder.model_version,
                 )
@@ -329,7 +327,8 @@ class PipelineRunner:
             # 10. Embed (using augmented text when questions are available)
             texts = [
                 build_augmented_text(c.text, c.generated_questions)
-                if c.generated_questions else c.text
+                if c.generated_questions
+                else c.text
                 for c in chunks
             ]
             vectors = self._embedder.embed_batch(texts) if texts else []
@@ -511,8 +510,11 @@ class PipelineRunner:
                 counts[outcome] += 1
                 if progress:
                     progress(
-                        file_idx, total,
-                        Path(event.file_path).name, outcome, detail,
+                        file_idx,
+                        total,
+                        Path(event.file_path).name,
+                        outcome,
+                        detail,
                     )
                 continue
             eligible.append((file_idx, event))
@@ -530,10 +532,13 @@ class PipelineRunner:
                 try:
                     # Handle deletions immediately as skip results
                     if event.event_type == "deleted":
-                        q.put(_ParseErrorResult(
-                            event=event, file_index=file_idx,
-                            error_msg="__deleted__",
-                        ))
+                        q.put(
+                            _ParseErrorResult(
+                                event=event,
+                                file_index=file_idx,
+                                error_msg="__deleted__",
+                            )
+                        )
                         continue
 
                     # Signal start before parsing begins (so display shows progress)
@@ -546,10 +551,13 @@ class PipelineRunner:
                     q.put(item)
                 except Exception as exc:
                     logger.warning("Parse error for %s: %s", event.file_path, exc)
-                    q.put(_ParseErrorResult(
-                        event=event, file_index=file_idx,
-                        error_msg="processing failed",
-                    ))
+                    q.put(
+                        _ParseErrorResult(
+                            event=event,
+                            file_index=file_idx,
+                            error_msg="processing failed",
+                        )
+                    )
             # Sentinel: signal the consumer that we are done
             q.put(None)
 
@@ -576,7 +584,9 @@ class PipelineRunner:
             _cli_summarizer = self._summarizer
 
         def _report_progress(
-            outcome: ProcessingOutcome, detail: str, file_path: str,
+            outcome: ProcessingOutcome,
+            detail: str,
+            file_path: str,
             file_index: int = 0,
         ) -> None:
             nonlocal processed_count
@@ -584,8 +594,11 @@ class PipelineRunner:
             counts[outcome] += 1
             if progress:
                 progress(
-                    file_index, total,
-                    Path(file_path).name, outcome, detail,
+                    file_index,
+                    total,
+                    Path(file_path).name,
+                    outcome,
+                    detail,
                 )
 
         def _collect_completed_questions() -> None:
@@ -635,7 +648,8 @@ class PipelineRunner:
                 start_idx = len(all_texts)
                 all_texts.extend(
                     build_augmented_text(c.text, c.generated_questions)
-                    if c.generated_questions else c.text
+                    if c.generated_questions
+                    else c.text
                     for c in pr.chunks
                 )
                 boundaries.append((start_idx, len(all_texts)))
@@ -669,11 +683,17 @@ class PipelineRunner:
                 except Exception:
                     logger.exception("Error indexing %s", pr.event.file_path)
                     self._update_sync_status(
-                        pr.event.file_path, "error", str(pr.event.file_path),
+                        pr.event.file_path,
+                        "error",
+                        str(pr.event.file_path),
                     )
                     self._log(
-                        None, pr.event.file_path, "pipeline", "error",
-                        pr.start, pr.event.file_path,
+                        None,
+                        pr.event.file_path,
+                        "pipeline",
+                        "error",
+                        pr.start,
+                        pr.event.file_path,
                     )
                     _report_progress(
                         ProcessingOutcome.ERROR,
@@ -733,11 +753,17 @@ class PipelineRunner:
                     start_t = time.monotonic()
                     self._ensure_sync_state(item.event)
                     self._update_sync_status(
-                        item.event.file_path, "error", str(item.event.file_path),
+                        item.event.file_path,
+                        "error",
+                        str(item.event.file_path),
                     )
                     self._log(
-                        None, item.event.file_path, "pipeline", "error",
-                        start_t, item.event.file_path,
+                        None,
+                        item.event.file_path,
+                        "pipeline",
+                        "error",
+                        start_t,
+                        item.event.file_path,
                     )
                     _report_progress(
                         ProcessingOutcome.ERROR,
@@ -771,7 +797,8 @@ class PipelineRunner:
                     on_status(pr.file_index, total, name, "questions...")
                 future = _cli_summarizer._pool.submit(
                     _cli_summarizer.generate_chunk_questions,
-                    pr.chunks, pr.parsed_doc.title,
+                    pr.chunks,
+                    pr.parsed_doc.title,
                 )
                 in_flight_questions.append((pr, future))
             else:
@@ -818,7 +845,8 @@ class PipelineRunner:
         )
 
     def _run_dedup_check(
-        self, pr: _ParsedFileResult,
+        self,
+        pr: _ParsedFileResult,
     ) -> tuple[ProcessingOutcome, str] | None:
         """Run dedup + fast-skip checks on the main thread.
 
@@ -841,7 +869,8 @@ class PipelineRunner:
 
         # Dedup check
         canonical = self._dedup.check_duplicate(
-            normalized.raw_content_hash, normalized.normalized_content_hash,
+            normalized.raw_content_hash,
+            normalized.normalized_content_hash,
         )
         if canonical is not None:
             existing_doc = self._db.get_document_by_path(file_path)
@@ -849,7 +878,12 @@ class PipelineRunner:
                 self._ensure_sync_state(event)
                 self._update_sync_status(file_path, "done")
                 self._log(
-                    canonical, file_path, "dedup", "unchanged", pr.start, "skipped",
+                    canonical,
+                    file_path,
+                    "dedup",
+                    "unchanged",
+                    pr.start,
+                    "skipped",
                 )
                 return ProcessingOutcome.UNCHANGED, "content unchanged"
 
@@ -857,9 +891,7 @@ class PipelineRunner:
             self._ensure_sync_state(event)
             doc_id = str(uuid.uuid4())
             canonical_doc = self._db.get_document(canonical)
-            canonical_name = (
-                Path(canonical_doc.file_path).name if canonical_doc else canonical
-            )
+            canonical_name = Path(canonical_doc.file_path).name if canonical_doc else canonical
             self._db.upsert_document(
                 DocumentRow(
                     doc_id=doc_id,
@@ -968,7 +1000,9 @@ class PipelineRunner:
                 section_heading=c.section_heading,
                 citation_label=c.citation_label,
                 token_count=c.token_count,
-                generated_questions=json.dumps(c.generated_questions) if c.generated_questions else None,
+                generated_questions=(
+                    json.dumps(c.generated_questions) if c.generated_questions else None
+                ),
                 embedding_model_version=self._embedder.model_version,
             )
             for c in pr.chunks
@@ -1013,7 +1047,12 @@ class PipelineRunner:
         # Summarize (if enabled)
         if on_status and self._summarizer and self._summarizer.available:
             section_count = len([s for s in pr.normalized.sections if s.text.strip()])
-            on_status(pr.file_index, 0, Path(file_path).name, f"summarizing (1 combined call, {section_count} sections)...")
+            on_status(
+                pr.file_index,
+                0,
+                Path(file_path).name,
+                f"summarizing (1 combined call, {section_count} sections)...",
+            )
 
         summary_points = self._summarize_document(
             doc_id=doc_id,
@@ -1034,8 +1073,12 @@ class PipelineRunner:
 
         self._update_sync_status(file_path, "done")
         self._log(
-            doc_id, file_path, "pipeline", "success",
-            pr.start, f"{len(pr.chunks)} chunks",
+            doc_id,
+            file_path,
+            "pipeline",
+            "success",
+            pr.start,
+            f"{len(pr.chunks)} chunks",
         )
 
     # ------------------------------------------------------------------
@@ -1061,9 +1104,7 @@ class PipelineRunner:
         if self._bg_worker is not None:
             errors = self._bg_worker.wait_all()
             if errors:
-                logger.warning(
-                    "Background upserts had %d error(s)", len(errors)
-                )
+                logger.warning("Background upserts had %d error(s)", len(errors))
 
     # ------------------------------------------------------------------
     # Summarization
@@ -1105,8 +1146,15 @@ class PipelineRunner:
 
         if isinstance(combined_result, CombinedSummarySuccess):
             return self._process_combined_result(
-                combined_result, doc_id, title, file_path, folder_path,
-                folder_ancestors, file_type, modified_at, normalized,
+                combined_result,
+                doc_id,
+                title,
+                file_path,
+                folder_path,
+                folder_ancestors,
+                file_type,
+                modified_at,
+                normalized,
                 section_pairs,
             )
 
@@ -1117,8 +1165,15 @@ class PipelineRunner:
             combined_result.error,
         )
         return self._summarize_document_fallback(
-            doc_id, title, file_path, folder_path, folder_ancestors,
-            file_type, modified_at, normalized, section_pairs,
+            doc_id,
+            title,
+            file_path,
+            folder_path,
+            folder_ancestors,
+            file_type,
+            modified_at,
+            normalized,
+            section_pairs,
         )
 
     def _process_combined_result(
@@ -1132,7 +1187,7 @@ class PipelineRunner:
         file_type: FileType,
         modified_at: str,
         normalized: NormalizedDocument,
-        section_pairs: list[tuple[object, SectionRow]],
+        section_pairs: list[tuple[ParsedSection, SectionRow]],
     ) -> list[VectorPoint]:
         """Process a successful combined summarization result into vector points."""
         # Update document row with doc-level summaries
@@ -1155,14 +1210,16 @@ class PipelineRunner:
         if len(combined.sections) < len(section_pairs):
             logger.warning(
                 "Combined summary for %s has %d/%d sections (output may have been truncated)",
-                file_path, len(combined.sections), len(section_pairs),
+                file_path,
+                len(combined.sections),
+                len(section_pairs),
             )
         else:
             logger.info("Generated combined summary for %s", file_path)
 
         # Update section rows with section-level summaries
         section_results: list[tuple[SectionSummarySuccess, SectionRow, int]] = []
-        for i, (section, section_row) in enumerate(section_pairs):
+        for i, (_section, section_row) in enumerate(section_pairs):
             if i < len(combined.sections):
                 sec = combined.sections[i]
                 sec_success = SectionSummarySuccess(
@@ -1182,9 +1239,17 @@ class PipelineRunner:
                 section_results.append((sec_success, section_row, i))
 
         return self._build_summary_points(
-            doc_id, title, file_path, folder_path, folder_ancestors,
-            file_type, modified_at, combined.summary_128w,
-            combined.doc_type_guess, combined.key_topics, section_results,
+            doc_id,
+            title,
+            file_path,
+            folder_path,
+            folder_ancestors,
+            file_type,
+            modified_at,
+            combined.summary_128w,
+            combined.doc_type_guess,
+            combined.key_topics,
+            section_results,
         )
 
     def _summarize_document_fallback(
@@ -1197,7 +1262,7 @@ class PipelineRunner:
         file_type: FileType,
         modified_at: str,
         normalized: NormalizedDocument,
-        section_pairs: list[tuple[object, SectionRow]],
+        section_pairs: list[tuple[ParsedSection, SectionRow]],
     ) -> list[VectorPoint]:
         """Fallback: separate doc summary + parallel section summaries."""
         full_text = "\n\n".join(s.text for s in normalized.sections)
@@ -1238,11 +1303,11 @@ class PipelineRunner:
         section_results: list[tuple[SectionSummarySuccess, SectionRow, int]] = []
 
         sections_for_batch: list[tuple[str | None, str]] = [
-            (section.heading, section.text)  # type: ignore[union-attr]
-            for section, _row in section_pairs
+            (section.heading, section.text) for section, _row in section_pairs
         ]
         batch_results = self._summarizer.summarize_sections_batch(  # type: ignore[union-attr]
-            sections_for_batch, doc_context,
+            sections_for_batch,
+            doc_context,
         )
 
         for i, sec_summary in enumerate(batch_results):
@@ -1266,9 +1331,17 @@ class PipelineRunner:
             section_results.append((sec_result, section_row, i))
 
         return self._build_summary_points(
-            doc_id, title, file_path, folder_path, folder_ancestors,
-            file_type, modified_at, doc_summary_text, doc_type_guess,
-            doc_key_topics, section_results,
+            doc_id,
+            title,
+            file_path,
+            folder_path,
+            folder_ancestors,
+            file_type,
+            modified_at,
+            doc_summary_text,
+            doc_type_guess,
+            doc_key_topics,
+            section_results,
         )
 
     def _build_summary_points(
@@ -1289,21 +1362,25 @@ class PipelineRunner:
         embed_entries: list[dict[str, object]] = []
 
         if doc_summary_text is not None:
-            embed_entries.append({
-                "text": doc_summary_text,
-                "type": "document",
-                "doc_type_guess": doc_type_guess,
-            })
+            embed_entries.append(
+                {
+                    "text": doc_summary_text,
+                    "type": "document",
+                    "doc_type_guess": doc_type_guess,
+                }
+            )
 
         section_results.sort(key=lambda t: t[2])
         for sec_result, section_row, order in section_results:
-            embed_entries.append({
-                "text": sec_result.section_summary_128w,
-                "type": "section",
-                "section_row": section_row,
-                "order": order,
-                "heading": section_row.section_heading,
-            })
+            embed_entries.append(
+                {
+                    "text": sec_result.section_summary_128w,
+                    "type": "section",
+                    "section_row": section_row,
+                    "order": order,
+                    "heading": section_row.section_heading,
+                }
+            )
 
         if not embed_entries:
             return []
@@ -1340,9 +1417,7 @@ class PipelineRunner:
             else:
                 sec_row = cast("SectionRow", entry["section_row"])
                 order = int(str(entry["order"]))
-                sec_point_id = str(
-                    uuid.uuid5(NAMESPACE_RAG, f"{doc_id}:section_summary:{order}")
-                )
+                sec_point_id = str(uuid.uuid5(NAMESPACE_RAG, f"{doc_id}:section_summary:{order}"))
                 summary_points.append(
                     VectorPoint(
                         point_id=sec_point_id,
@@ -1411,7 +1486,7 @@ class PipelineRunner:
         ):
             try:
                 last_attempt = datetime.fromisoformat(sync_state.synced_at)
-                backoff = timedelta(seconds=(2 ** sync_state.retry_count) * 30)
+                backoff = timedelta(seconds=(2**sync_state.retry_count) * 30)
                 retry_after = last_attempt + backoff
                 now = datetime.now(tz=last_attempt.tzinfo or UTC)
                 if now < retry_after:

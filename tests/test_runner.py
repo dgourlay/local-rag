@@ -18,8 +18,6 @@ from rag.results import (
     CombinedSummarySuccess,
     ParseError,
     ParseSuccess,
-    SectionSummaryError,
-    SectionSummarySuccess,
     SummarySuccess,
 )
 from rag.types import (
@@ -343,7 +341,9 @@ class TestProcessBatch:
         call_count = 0
 
         def side_effect_parse(
-            fp: str, ocr: bool, content_hash: str | None = None,
+            fp: str,
+            ocr: bool,
+            content_hash: str | None = None,
         ) -> ParseSuccess:
             nonlocal call_count
             call_count += 1
@@ -389,7 +389,9 @@ class TestProcessBatch:
         call_count = 0
 
         def side_effect_parse(
-            fp: str, ocr: bool, content_hash: str | None = None,
+            fp: str,
+            ocr: bool,
+            content_hash: str | None = None,
         ) -> ParseSuccess | ParseError:
             nonlocal call_count
             call_count += 1
@@ -412,8 +414,11 @@ class TestProcessBatch:
         calls: list[tuple[int, int, str, ProcessingOutcome, str]] = []
 
         def on_progress(
-            current: int, total: int, filename: str,
-            outcome: ProcessingOutcome, detail: str,
+            current: int,
+            total: int,
+            filename: str,
+            outcome: ProcessingOutcome,
+            detail: str,
         ) -> None:
             calls.append((current, total, filename, outcome, detail))
 
@@ -577,7 +582,7 @@ class TestSummarizationBatchEmbedding:
         assert mocks["embedder"].embed_batch.call_count == 1
 
     def test_section_failure_does_not_block_others(self, tmp_path: Path) -> None:
-        """If combined fails and one section is missing in fallback batch, others still produce points."""
+        """Missing fallback section summaries do not block the remaining summary points."""
         conn = _create_db()
         num_sections = 3
 
@@ -796,7 +801,9 @@ class TestPipelineParallelism:
         call_count = 0
 
         def side_effect_parse(
-            fp: str, ocr: bool, content_hash: str | None = None,
+            fp: str,
+            ocr: bool,
+            content_hash: str | None = None,
         ) -> ParseSuccess:
             nonlocal call_count
             call_count += 1
@@ -824,9 +831,7 @@ class TestPipelineParallelism:
 
         mock_embedder = MagicMock()
         # Return a vector for each text
-        mock_embedder.embed_batch.side_effect = lambda texts: [
-            [0.1] * 3 for _ in texts
-        ]
+        mock_embedder.embed_batch.side_effect = lambda texts: [[0.1] * 3 for _ in texts]
         mock_embedder.model_version = "test-model-v1"
 
         mock_vector_store = MagicMock()
@@ -856,7 +861,9 @@ class TestPipelineParallelism:
             )
 
         def side_effect_parse(
-            fp: str, ocr: bool, content_hash: str | None = None,
+            fp: str,
+            ocr: bool,
+            content_hash: str | None = None,
         ) -> ParseSuccess:
             nonlocal call_count
             call_count += 1
@@ -948,7 +955,9 @@ class TestPipelineParallelism:
         call_count = 0
 
         def side_effect_parse(
-            fp: str, ocr: bool, content_hash: str | None = None,
+            fp: str,
+            ocr: bool,
+            content_hash: str | None = None,
         ) -> ParseSuccess | ParseError:
             nonlocal call_count
             call_count += 1
@@ -1000,7 +1009,9 @@ class TestPipelineParallelism:
         call_count = 0
 
         def side_effect_parse(
-            fp: str, ocr: bool, content_hash: str | None = None,
+            fp: str,
+            ocr: bool,
+            content_hash: str | None = None,
         ) -> ParseSuccess:
             nonlocal call_count
             call_count += 1
@@ -1013,8 +1024,11 @@ class TestPipelineParallelism:
         calls: list[tuple[int, int, str, ProcessingOutcome, str]] = []
 
         def on_progress(
-            current: int, total: int, filename: str,
-            outcome: ProcessingOutcome, detail: str,
+            current: int,
+            total: int,
+            filename: str,
+            outcome: ProcessingOutcome,
+            detail: str,
         ) -> None:
             calls.append((current, total, filename, outcome, detail))
 
@@ -1037,7 +1051,8 @@ class TestPipelineParallelism:
         assert all(v == 0 for v in counts.values())
 
     def test_batch_with_small_batch_size_triggers_multiple_embeds(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """When batch_size is small, embed_batch should be called multiple times."""
         from rag.config import AppConfig, EmbeddingConfig, FoldersConfig
@@ -1048,9 +1063,7 @@ class TestPipelineParallelism:
         dedup = DedupChecker(conn)
 
         mock_embedder = MagicMock()
-        mock_embedder.embed_batch.side_effect = lambda texts: [
-            [0.1] * 3 for _ in texts
-        ]
+        mock_embedder.embed_batch.side_effect = lambda texts: [[0.1] * 3 for _ in texts]
         mock_embedder.model_version = "test-model-v1"
 
         mock_vector_store = MagicMock()
@@ -1060,7 +1073,9 @@ class TestPipelineParallelism:
         call_count = 0
 
         def side_effect_parse(
-            fp: str, ocr: bool, content_hash: str | None = None,
+            fp: str,
+            ocr: bool,
+            content_hash: str | None = None,
         ) -> ParseSuccess:
             nonlocal call_count
             call_count += 1

@@ -33,9 +33,7 @@ def _make_chunk(
     )
 
 
-def _make_summarizer(
-    *, command: str = "echo", enabled: bool = True
-) -> CliSummarizer:
+def _make_summarizer(*, command: str = "echo", enabled: bool = True) -> CliSummarizer:
     config = SummarizationConfig(
         enabled=enabled,
         command=command,
@@ -90,14 +88,7 @@ class TestChunkModelQuestions:
 class TestBuildAugmentedText:
     def test_basic(self) -> None:
         result = build_augmented_text("Original text.", ["Q1", "Q2", "Q3"])
-        expected = (
-            "Questions this content answers:\n"
-            "- Q1\n"
-            "- Q2\n"
-            "- Q3\n"
-            "\n"
-            "Original text."
-        )
+        expected = "Questions this content answers:\n- Q1\n- Q2\n- Q3\n\nOriginal text."
         assert result == expected
 
     def test_single_question(self) -> None:
@@ -172,26 +163,28 @@ class TestGenerateChunkQuestions:
 
     @patch.object(CliSummarizer, "_run_cli")
     def test_basic_question_generation(self, mock_cli: MagicMock) -> None:
-        mock_cli.return_value = json.dumps({
-            "chunks": [
-                {
-                    "chunk_order": 0,
-                    "questions": [
-                        "What is chunk zero about?",
-                        "Chunk zero details",
-                        "How does chunk zero work?",
-                    ],
-                },
-                {
-                    "chunk_order": 1,
-                    "questions": [
-                        "What is chunk one about?",
-                        "Chunk one details",
-                        "How does chunk one work?",
-                    ],
-                },
-            ]
-        })
+        mock_cli.return_value = json.dumps(
+            {
+                "chunks": [
+                    {
+                        "chunk_order": 0,
+                        "questions": [
+                            "What is chunk zero about?",
+                            "Chunk zero details",
+                            "How does chunk zero work?",
+                        ],
+                    },
+                    {
+                        "chunk_order": 1,
+                        "questions": [
+                            "What is chunk one about?",
+                            "Chunk one details",
+                            "How does chunk one work?",
+                        ],
+                    },
+                ]
+            }
+        )
 
         summarizer = _make_summarizer()
         chunks = [_make_chunk(chunk_order=0), _make_chunk(chunk_order=1)]
@@ -232,15 +225,17 @@ class TestGenerateChunkQuestions:
     @patch.object(CliSummarizer, "_run_cli")
     def test_partial_json_response(self, mock_cli: MagicMock) -> None:
         """When only some chunks have questions, matched ones get them."""
-        mock_cli.return_value = json.dumps({
-            "chunks": [
-                {
-                    "chunk_order": 0,
-                    "questions": ["Q1", "Q2", "Q3"],
-                },
-                # chunk_order=1 is missing (truncated response)
-            ]
-        })
+        mock_cli.return_value = json.dumps(
+            {
+                "chunks": [
+                    {
+                        "chunk_order": 0,
+                        "questions": ["Q1", "Q2", "Q3"],
+                    },
+                    # chunk_order=1 is missing (truncated response)
+                ]
+            }
+        )
 
         summarizer = _make_summarizer()
         chunks = [_make_chunk(chunk_order=0), _make_chunk(chunk_order=1)]
@@ -260,13 +255,16 @@ class TestGenerateChunkQuestions:
         def fake_cli(prompt: str) -> str:
             # Parse which chunk orders are in this batch from the prompt
             import re
+
             orders = [int(m) for m in re.findall(r"--- Chunk (\d+) ---", prompt)]
-            return json.dumps({
-                "chunks": [
-                    {"chunk_order": o, "questions": [f"Q{o}-1", f"Q{o}-2", f"Q{o}-3"]}
-                    for o in orders
-                ]
-            })
+            return json.dumps(
+                {
+                    "chunks": [
+                        {"chunk_order": o, "questions": [f"Q{o}-1", f"Q{o}-2", f"Q{o}-3"]}
+                        for o in orders
+                    ]
+                }
+            )
 
         mock_cli.side_effect = fake_cli
 
@@ -294,14 +292,16 @@ class TestGenerateChunkQuestions:
     @patch.object(CliSummarizer, "_run_cli")
     def test_questions_not_strings_filtered(self, mock_cli: MagicMock) -> None:
         """Non-string items in questions list should be filtered out."""
-        mock_cli.return_value = json.dumps({
-            "chunks": [
-                {
-                    "chunk_order": 0,
-                    "questions": ["Valid question", 42, None, "Another valid"],
-                },
-            ]
-        })
+        mock_cli.return_value = json.dumps(
+            {
+                "chunks": [
+                    {
+                        "chunk_order": 0,
+                        "questions": ["Valid question", 42, None, "Another valid"],
+                    },
+                ]
+            }
+        )
 
         summarizer = _make_summarizer()
         chunks = [_make_chunk(chunk_order=0)]
@@ -316,11 +316,13 @@ class TestGenerateChunkQuestions:
     def test_original_text_preserved(self, mock_cli: MagicMock) -> None:
         """chunk.text should remain unchanged after question generation."""
         original_text = "This is the original chunk text."
-        mock_cli.return_value = json.dumps({
-            "chunks": [
-                {"chunk_order": 0, "questions": ["Q1", "Q2", "Q3"]},
-            ]
-        })
+        mock_cli.return_value = json.dumps(
+            {
+                "chunks": [
+                    {"chunk_order": 0, "questions": ["Q1", "Q2", "Q3"]},
+                ]
+            }
+        )
 
         summarizer = _make_summarizer()
         chunks = [_make_chunk(chunk_order=0, text=original_text)]
@@ -337,11 +339,13 @@ class TestAugmentedTextIntegration:
     @patch.object(CliSummarizer, "_run_cli")
     def test_augmented_text_differs_from_chunk_text(self, mock_cli: MagicMock) -> None:
         """Augmented text should include questions, but chunk.text should not."""
-        mock_cli.return_value = json.dumps({
-            "chunks": [
-                {"chunk_order": 0, "questions": ["Q1", "Q2", "Q3"]},
-            ]
-        })
+        mock_cli.return_value = json.dumps(
+            {
+                "chunks": [
+                    {"chunk_order": 0, "questions": ["Q1", "Q2", "Q3"]},
+                ]
+            }
+        )
 
         summarizer = _make_summarizer()
         chunks = [_make_chunk(chunk_order=0, text="Original.")]

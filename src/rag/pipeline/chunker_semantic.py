@@ -50,19 +50,48 @@ def restore_code_blocks(chunk_text: str, blocks: list[str]) -> str:
 # --- Sentence segmentation ---
 
 # Common abbreviations that should not trigger sentence splits
-_ABBREVIATIONS = frozenset({
-    "dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st", "ave", "blvd",
-    "dept", "est", "vol", "vs", "etc", "inc", "ltd", "corp", "govt",
-    "approx", "fig", "gen", "no", "ref", "rev", "sgt", "pvt",
-    "e.g", "i.e", "al", "cf",
-})
+_ABBREVIATIONS = frozenset(
+    {
+        "dr",
+        "mr",
+        "mrs",
+        "ms",
+        "prof",
+        "sr",
+        "jr",
+        "st",
+        "ave",
+        "blvd",
+        "dept",
+        "est",
+        "vol",
+        "vs",
+        "etc",
+        "inc",
+        "ltd",
+        "corp",
+        "govt",
+        "approx",
+        "fig",
+        "gen",
+        "no",
+        "ref",
+        "rev",
+        "sgt",
+        "pvt",
+        "e.g",
+        "i.e",
+        "al",
+        "cf",
+    }
+)
 
 # Regex: split at sentence-ending punctuation followed by whitespace and
 # an uppercase letter or quote, but not after known abbreviations or decimals.
 _SENTENCE_SPLIT_RE = re.compile(
-    r"(?<=[.!?])"   # lookbehind: sentence-ending punctuation
+    r"(?<=[.!?])"  # lookbehind: sentence-ending punctuation
     r"(?<!\b\d\.)"  # negative lookbehind: not a decimal like "3."
-    r"\s+"           # whitespace gap
+    r"\s+"  # whitespace gap
     r"(?=[A-Z\"\'\u201c\u201d])"  # lookahead: uppercase or opening quote
 )
 
@@ -127,14 +156,10 @@ def detect_boundaries(
         chunk_size = i - current_chunk_start
 
         # Sigmoid growth pressure
-        growth_pressure = 1.0 / (
-            1.0 + math.exp(-(chunk_size - max_chunk_sentences) / 2)
-        )
+        growth_pressure = 1.0 / (1.0 + math.exp(-(chunk_size - max_chunk_sentences) / 2))
 
         # Dynamic threshold rises with growth pressure
-        dynamic_threshold = similarity_threshold + (
-            1.0 - similarity_threshold
-        ) * growth_pressure
+        dynamic_threshold = similarity_threshold + (1.0 - similarity_threshold) * growth_pressure
 
         # Max similarity: best cosine match to any sentence in current chunk
         max_sim = max(
@@ -204,9 +229,7 @@ def _split_oversized_chunks(
 # --- Embedding helpers ---
 
 
-def _embed_sentences(
-    sentences: list[str], embedder: Embedder
-) -> list[list[float]]:
+def _embed_sentences(sentences: list[str], embedder: Embedder) -> list[list[float]]:
     """Embed sentences in batches to avoid memory spikes."""
     if len(sentences) <= _SENTENCE_BATCH_SIZE:
         return embedder.embed_batch(sentences)
@@ -232,9 +255,7 @@ def chunk_document_semantic(
     file_name = doc.title or doc.doc_id
 
     for section in doc.sections:
-        section_id = str(
-            uuid.uuid5(NAMESPACE_RAG, f"{doc.doc_id}:section:{section.order}")
-        )
+        section_id = str(uuid.uuid5(NAMESPACE_RAG, f"{doc.doc_id}:section:{section.order}"))
         section_chunks = _chunk_section_semantic(
             text=section.text,
             doc_id=doc.doc_id,
@@ -303,18 +324,12 @@ def _chunk_section_semantic(
     # 6. Group sentences by boundaries
     sentence_groups: list[list[str]] = []
     for idx, boundary in enumerate(boundary_indices):
-        end = (
-            boundary_indices[idx + 1]
-            if idx + 1 < len(boundary_indices)
-            else len(sentences)
-        )
+        end = boundary_indices[idx + 1] if idx + 1 < len(boundary_indices) else len(sentences)
         sentence_groups.append(sentences[boundary:end])
 
     # 7. Apply guardrails
     sentence_groups = _merge_small_chunks(sentence_groups)
-    sentence_groups = _split_oversized_chunks(
-        sentence_groups, config.max_chunk_tokens
-    )
+    sentence_groups = _split_oversized_chunks(sentence_groups, config.max_chunk_tokens)
 
     # 8. Build Chunk objects
     chunks: list[Chunk] = []
