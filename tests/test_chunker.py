@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from rag.pipeline.chunker import (
+    OVERLAP_TOKENS,
     TARGET_TOKENS,
     _build_citation,
     chunk_document,
@@ -160,15 +161,51 @@ class TestEmptySection:
         assert chunks == []
 
 
+# Chunks are capped at the target plus the overlap carried from the previous
+# chunk -- the same budget TestTokenLimits asserts.
+_MAX_CHUNK_TOKENS = TARGET_TOKENS + OVERLAP_TOKENS
+
+
 class TestLongSentence:
-    def test_single_long_sentence_own_chunk(self) -> None:
-        # Create a sentence longer than TARGET_TOKENS
+    def test_single_long_sentence_is_split_to_token_limit(self) -> None:
+        # A sentence longer than TARGET_TOKENS must still be split: an
+        # unbounded chunk pads the whole embedding batch to its length and
+        # blows up attention memory.
         long_sentence = "word " * (TARGET_TOKENS + 100)
         long_sentence = long_sentence.strip() + "."
         doc = _make_doc(sections=[_make_section(long_sentence, order=0)])
         chunks = chunk_document(doc)
-        assert len(chunks) == 1
-        assert chunks[0].token_count > TARGET_TOKENS
+        assert len(chunks) > 1
+        for chunk in chunks:
+            assert chunk.token_count <= _MAX_CHUNK_TOKENS
+
+    def test_unpunctuated_blob_is_split(self) -> None:
+        # Markdown tables / bullet lists have no sentence punctuation, so
+        # sentence segmentation yields one giant "sentence".
+        table = "\n".join(f"| row {i} | value {i} | note {i} |" for i in range(2000))
+        doc = _make_doc(sections=[_make_section(table, order=0)])
+        chunks = chunk_document(doc)
+        assert len(chunks) > 1
+        for chunk in chunks:
+            assert chunk.token_count <= _MAX_CHUNK_TOKENS
+
+    def test_whitespace_free_run_is_split(self) -> None:
+        # A single unbreakable token run (base64 blob, long URL) has no
+        # whitespace to split on and must still be bounded.
+        blob = "A1b2C3d4" * 2000
+        doc = _make_doc(sections=[_make_section(blob, order=0)])
+        chunks = chunk_document(doc)
+        assert len(chunks) > 1
+        for chunk in chunks:
+            assert chunk.token_count <= _MAX_CHUNK_TOKENS
+
+    def test_split_preserves_content(self) -> None:
+        words = [f"w{i}" for i in range(3000)]
+        doc = _make_doc(sections=[_make_section(" ".join(words), order=0)])
+        chunks = chunk_document(doc)
+        rejoined = " ".join(c.text for c in chunks).split()
+        # Overlap may repeat words, but nothing may be dropped.
+        assert set(words) <= set(rejoined)
 
 
 class TestOverlap:

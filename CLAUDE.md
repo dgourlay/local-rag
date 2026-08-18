@@ -96,8 +96,11 @@ rag mcp-config --print            # Print MCP config JSON snippet
 ## Conventions
 
 - Chunking: fixed strategy (512 tokens, 64-token overlap) or opt-in semantic strategy (Max-Min algorithm, BGE-M3 sentence embeddings, similarity_threshold 0.35, max 768 tokens, no overlap). Configured via `[chunking]` section. `chunker_version` = "semantic-v1" triggers re-index on strategy change.
+- Chunk token cap is hard, not advisory: `split_long_sentence()` splits any sentence over the budget (on whitespace, falling back to token windows). Sentence segmentation only breaks on `.!?`, so markdown tables, bullet lists, and log dumps segment into one arbitrarily long "sentence" — never let one reach the embedder.
 - Auto-generated questions: LLM generates 3 questions per chunk at index time (`[questions]` config). Questions prepended to chunk text before embedding. Stored in `generated_questions` Qdrant payload field (keyword-indexed). Graceful degradation if LLM unavailable.
 - Embedding dimensions: 1024 (BGE-M3)
+- Embedder memory is capped by `embedding.max_seq_length` (clamps BGE-M3's native 8192 window) and `embedding.max_batch_tokens` (bounds `batch_size * longest_sequence` per forward pass). Attention scales with `batch * seq_len^2` and a batch is padded to its longest member, so an uncapped long input demands tens of GB — on MPS that is a Metal assertion and `abort()`, not a catchable exception.
+- `SentenceTransformerEmbedder.embed_batch` serializes on a lock: the indexing pipeline calls the model from both the parser thread (semantic chunking) and the main thread (chunk embedding), and concurrent forward passes on one MPS module are unsafe.
 - Qdrant: single collection "documents", cosine distance, record_type payload field, all search via `query_points()` API (not removed `search()`)
 - Qdrant indexing: deterministic UUID5 point IDs for overwrite semantics (no delete+upsert)
 - UUID5 namespace: `NAMESPACE_RAG` constant, format `f"{doc_id}:{section_order}:{chunk_order}"`
@@ -121,7 +124,8 @@ rag mcp-config --print            # Print MCP config JSON snippet
 
 - `make lint` — ruff check + mypy strict
 - `make test` — unit tests (fast, no Docker)
-- `make test-e2e` — end-to-end with real Qdrant Docker, real BGE-M3 model, real `claude` CLI for summarization, real MCP server subprocess
-- E2e tests use fixture documents with known query-answer pairs — asserts on specific content, not just "something returned"
-- `make test-e2e` passing = system works. No ambiguity.
+- `make test-e2e` — integration tests. Be aware of what these actually cover: `tests/e2e/conftest.py` wires up in-memory Qdrant (`QdrantClient(location=":memory:")`, not the Docker container) plus `FakeEmbedder`, `FakeReranker`, and `FakeSummarizer`. They verify wiring and pipeline flow, not model or GPU behaviour.
+- `tests/e2e/test_embedder_real.py` is the one suite that loads the real BGE-M3 model (~45s). It exists because faking the embedder everywhere hid an unbounded-sequence bug that aborted the process — see the chunk token cap and embedder memory caps under Conventions. Add real-model coverage here, not to the faked suites.
+- `make test-e2e` passing does NOT prove the system works against real models, real Qdrant, or a real LLM CLI. Verify those by hand (`rag index`, `rag search`, `rag watch`) when touching the embedding, reranking, or summarization paths.
+- The `e2e` marker declared in `pyproject.toml` is applied only to `test_embedder_real.py`; `make test`'s `-k "not e2e"` filter otherwise matches on path/name, not the marker.
 - When fixing tests, be careful with patch paths — always verify the import path used in the module under test, not the original definition path. After fixing lint, re-run to confirm no new unused import warnings were introduced.

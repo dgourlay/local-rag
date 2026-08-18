@@ -44,6 +44,12 @@ class EmbeddingConfig(BaseModel):
     cache_dir: Path = Path("~/.cache/local-rag/models")
     device: Literal["cpu", "mps", "auto"] = "auto"
     fp16: bool = True
+    # Hard caps on embedder memory. Self-attention scales with
+    # batch * seq_len^2, and a batch is padded to its longest member, so an
+    # uncapped long input can demand tens of GB and abort the process (Metal
+    # raises a fatal assertion, not a catchable exception).
+    max_seq_length: int = Field(default=2048, ge=128, le=8192)
+    max_batch_tokens: int = Field(default=8192, ge=512)
 
     @model_validator(mode="after")
     def expand_paths(self) -> EmbeddingConfig:

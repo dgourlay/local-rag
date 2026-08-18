@@ -24,7 +24,13 @@ from rag.db.qdrant import QdrantVectorStore
 from rag.pipeline.dedup import DedupChecker
 from rag.pipeline.parser.text_parser import TextParser
 from rag.pipeline.runner import PipelineRunner
-from rag.results import SectionSummarySuccess, SummarySuccess
+from rag.results import (
+    CombinedSectionSummary,
+    CombinedSummaryError,
+    CombinedSummarySuccess,
+    SectionSummarySuccess,
+    SummarySuccess,
+)
 from rag.retrieval.citations import CitationAssembler
 from rag.retrieval.engine import RetrievalEngine
 from rag.sync.scanner import scan_folders
@@ -83,13 +89,71 @@ class FakeReranker:
 
 
 class FakeSummarizer:
-    """Fake summarizer that returns deterministic summaries without calling CLI."""
+    """Fake summarizer that returns deterministic summaries without calling a CLI.
+
+    Implements the full ``Summarizer`` protocol. ``summarize_combined`` is the path the
+    pipeline takes first, so it is the primary method; ``summarize_document`` and
+    ``summarize_sections_batch`` back the pipeline's fallback path. Pass
+    ``combined_fails=True`` to force that fallback. Call counters let tests assert which
+    path ran.
+    """
+
+    def __init__(self, *, combined_fails: bool = False) -> None:
+        self._combined_fails = combined_fails
+        self.combined_calls = 0
+        self.document_calls = 0
+        self.section_batch_calls = 0
 
     @property
     def available(self) -> bool:
         return True
 
+    def summarize_combined(
+        self,
+        text: str,
+        title: str | None,
+        file_type: str,
+        sections: list[tuple[str | None, str]],
+    ) -> CombinedSummarySuccess | CombinedSummaryError:
+        self.combined_calls += 1
+        if self._combined_fails:
+            return CombinedSummaryError(error="fake combined summarization failure")
+
+        doc = self._document_levels(text, title, file_type)
+        return CombinedSummarySuccess(
+            summary_8w=doc.summary_8w,
+            summary_16w=doc.summary_16w,
+            summary_32w=doc.summary_32w,
+            summary_64w=doc.summary_64w,
+            summary_128w=doc.summary_128w,
+            key_topics=doc.key_topics,
+            doc_type_guess=doc.doc_type_guess,
+            sections=[
+                self._section_levels(section_text, heading) for heading, section_text in sections
+            ],
+        )
+
     def summarize_document(self, text: str, title: str | None, file_type: str) -> SummarySuccess:
+        self.document_calls += 1
+        return self._document_levels(text, title, file_type)
+
+    def summarize_section(
+        self, text: str, heading: str | None, doc_context: str
+    ) -> SectionSummarySuccess:
+        sec = self._section_levels(text, heading)
+        return SectionSummarySuccess(
+            section_summary_8w=sec.section_summary_8w,
+            section_summary_32w=sec.section_summary_32w,
+            section_summary_128w=sec.section_summary_128w,
+        )
+
+    def summarize_sections_batch(
+        self, sections: list[tuple[str | None, str]], doc_context: str
+    ) -> list[CombinedSectionSummary]:
+        self.section_batch_calls += 1
+        return [self._section_levels(section_text, heading) for heading, section_text in sections]
+
+    def _document_levels(self, text: str, title: str | None, file_type: str) -> SummarySuccess:
         return SummarySuccess(
             summary_8w=f"Summary of {title or 'doc'}",
             summary_16w=f"Brief summary of {title or 'doc'} in {file_type}.",
@@ -108,10 +172,9 @@ class FakeSummarizer:
             doc_type_guess="document",
         )
 
-    def summarize_section(
-        self, text: str, heading: str | None, doc_context: str
-    ) -> SectionSummarySuccess:
-        return SectionSummarySuccess(
+    def _section_levels(self, text: str, heading: str | None) -> CombinedSectionSummary:
+        return CombinedSectionSummary(
+            heading=heading,
             section_summary_8w=f"About {heading or 'content'}",
             section_summary_32w=f"Section '{heading or 'untitled'}' discusses: {text[:80]}...",
             section_summary_128w=(
@@ -282,6 +345,80 @@ class TestSummaryVectorsInQdrant:
         for doc in docs:
             assert doc["summary_8w"] is not None
             assert doc["summary_8w"].startswith("Summary of")
+
+
+class TestCombinedSummaryPath:
+    def test_combined_call_is_the_default_path(
+        self,
+        indexed_with_summaries: tuple[PipelineRunner, int, int],
+        summarizer: FakeSummarizer,
+    ) -> None:
+        """Indexing uses summarize_combined and never falls back when it succeeds."""
+        _runner, _success, _errors = indexed_with_summaries
+
+        assert summarizer.combined_calls > 0, "Expected the pipeline to call summarize_combined"
+        assert summarizer.document_calls == 0, "Fallback summarize_document should not run"
+        assert summarizer.section_batch_calls == 0, "Fallback section batching should not run"
+
+    def test_fallback_to_separate_calls_when_combined_fails(
+        self,
+        metadata_db: SqliteMetadataDB,
+        qdrant_store: QdrantVectorStore,
+        embedder: FakeEmbedder,
+        tmp_config: AppConfig,
+        db_conn: sqlite3.Connection,
+        file_events: list[FileEvent],
+    ) -> None:
+        """When summarize_combined errors, summaries still land via the separate calls."""
+        from rag.types import ProcessingOutcome
+
+        failing = FakeSummarizer(combined_fails=True)
+        runner = PipelineRunner(
+            db=metadata_db,
+            vector_store=qdrant_store,
+            embedder=embedder,
+            parsers=[TextParser()],
+            dedup=DedupChecker(db_conn),
+            config=tmp_config,
+            summarizer=failing,
+        )
+
+        counts = runner.process_batch(file_events)
+        # Same expectation as the happy path: the parseable fixtures all get indexed.
+        # (The fixture folder also holds deliberately broken files, which error out.)
+        success = counts[ProcessingOutcome.INDEXED] + counts[ProcessingOutcome.DUPLICATE]
+        assert success >= 4
+
+        # Every combined attempt failed and was retried as doc + section-batch calls
+        assert failing.combined_calls > 0
+        assert failing.document_calls == failing.combined_calls
+        assert failing.section_batch_calls == failing.combined_calls
+
+        # Document- and section-level summaries still persisted
+        docs = db_conn.execute(
+            "SELECT summary_8w, summary_128w, key_topics FROM documents "
+            "WHERE summary_8w IS NOT NULL"
+        ).fetchall()
+        assert len(docs) > 0, "Expected summaries from the fallback path"
+        for doc in docs:
+            assert doc["summary_8w"].startswith("Summary of")
+            assert doc["key_topics"] is not None
+
+        sections = db_conn.execute(
+            "SELECT section_summary_8w, section_summary_128w FROM sections "
+            "WHERE section_summary_128w IS NOT NULL"
+        ).fetchall()
+        assert len(sections) > 0, "Expected section summaries from the fallback path"
+
+        # And summary vectors still reached Qdrant
+        points, _ = qdrant_store._client.scroll(
+            collection_name="test_improvements",
+            limit=500,
+            with_payload=True,
+        )
+        record_types = {p.payload["record_type"] for p in points if p.payload}
+        assert RecordType.DOCUMENT_SUMMARY.value in record_types
+        assert RecordType.SECTION_SUMMARY.value in record_types
 
 
 # --- Test 2: Prefetch lanes debug info ---

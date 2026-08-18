@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from rag.pipeline.chunker import _make_chunk, count_tokens
+from rag.pipeline.chunker import _make_chunk, count_tokens, split_long_sentence
 from rag.types import NAMESPACE_RAG, Chunk, NormalizedDocument, ParsedSection
 
 if TYPE_CHECKING:
@@ -187,17 +187,23 @@ def _split_oversized_chunks(
     sentence_groups: list[list[str]],
     max_chunk_tokens: int,
 ) -> list[list[str]]:
-    """Split chunks exceeding max_chunk_tokens at sentence midpoint."""
+    """Split chunks exceeding max_chunk_tokens until every chunk fits.
+
+    Multi-sentence groups split at the midpoint, repeatedly -- one split may
+    not be enough.  A lone oversized sentence is hard-split on token windows
+    rather than passed through unbounded.
+    """
     result: list[list[str]] = []
-    for group in sentence_groups:
-        group_text = " ".join(group)
-        if count_tokens(group_text) <= max_chunk_tokens or len(group) <= 1:
+    queue = list(sentence_groups)
+    while queue:
+        group = queue.pop(0)
+        if count_tokens(" ".join(group)) <= max_chunk_tokens:
             result.append(group)
-            continue
-        # Split at midpoint
-        mid = len(group) // 2
-        result.append(group[:mid])
-        result.append(group[mid:])
+        elif len(group) > 1:
+            mid = len(group) // 2
+            queue[:0] = [group[:mid], group[mid:]]
+        else:
+            result.extend([piece] for piece in split_long_sentence(group[0], max_chunk_tokens))
     return result
 
 
@@ -269,8 +275,14 @@ def _chunk_section_semantic(
     # 1. Extract code blocks
     cleaned_text, code_blocks = extract_code_blocks(text)
 
-    # 2. Segment sentences
-    sentences = segment_sentences(cleaned_text)
+    # 2. Segment sentences, capping any that exceed the chunk budget so a
+    #    single unpunctuated blob can't become one unbounded chunk (or one
+    #    unbounded sequence in the sentence-embedding batch below).
+    sentences = [
+        piece
+        for sentence in segment_sentences(cleaned_text)
+        for piece in split_long_sentence(sentence, config.max_chunk_tokens)
+    ]
     if not sentences:
         return []
 

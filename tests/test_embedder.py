@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +9,28 @@ import pytest
 
 from rag.config import EmbeddingConfig
 from rag.pipeline.embedder import SentenceTransformerEmbedder, _resolve_device
+
+
+def _make_mock_model(max_seq_length: int = 8192) -> MagicMock:
+    """Mock SentenceTransformer with the surface the embedder relies on.
+
+    Token length is approximated as one token per whitespace-separated word
+    plus two special tokens, which is enough to exercise micro-batching.
+    """
+    model = MagicMock()
+    model.max_seq_length = max_seq_length
+    model.tokenizer = MagicMock(
+        side_effect=lambda texts, **kwargs: {
+            "input_ids": [
+                [0] * min(len(t.split()) + 2, kwargs.get("max_length", max_seq_length))
+                for t in texts
+            ]
+        }
+    )
+    model.encode = MagicMock(
+        side_effect=lambda batch, **kwargs: np.random.rand(len(batch), 1024).astype(np.float32)
+    )
+    return model
 
 
 @pytest.fixture
@@ -23,9 +46,7 @@ def config() -> EmbeddingConfig:
 
 @pytest.fixture
 def mock_model() -> MagicMock:
-    model = MagicMock()
-    model.encode.return_value = np.random.rand(3, 1024).astype(np.float32)
-    return model
+    return _make_mock_model()
 
 
 class TestSentenceTransformerEmbedder:
@@ -54,8 +75,7 @@ class TestSentenceTransformerEmbedder:
         )
 
     def test_embed_query_returns_single_vector(self, config: EmbeddingConfig) -> None:
-        single_mock = MagicMock()
-        single_mock.encode.return_value = np.random.rand(1, 1024).astype(np.float32)
+        single_mock = _make_mock_model()
         with patch("sentence_transformers.SentenceTransformer", return_value=single_mock):
             embedder = SentenceTransformerEmbedder(config)
             result = embedder.embed_query("search query")
@@ -134,8 +154,7 @@ class TestDeviceResolution:
             cache_dir=Path("/tmp/test-models"),
             device="mps",
         )
-        mock_model = MagicMock()
-        mock_model.encode.return_value = np.random.rand(1, 1024).astype(np.float32)
+        mock_model = _make_mock_model()
         with patch(
             "sentence_transformers.SentenceTransformer", return_value=mock_model
         ) as mock_cls:
@@ -169,8 +188,7 @@ class TestFP16Config:
             cache_dir=Path("/tmp/test-models"),
             fp16=True,
         )
-        mock_model = MagicMock()
-        mock_model.encode.return_value = np.random.rand(1, 1024).astype(np.float32)
+        mock_model = _make_mock_model()
         with patch(
             "sentence_transformers.SentenceTransformer", return_value=mock_model
         ) as mock_cls:
@@ -186,8 +204,7 @@ class TestFP16Config:
             cache_dir=Path("/tmp/test-models"),
             fp16=False,
         )
-        mock_model = MagicMock()
-        mock_model.encode.return_value = np.random.rand(1, 1024).astype(np.float32)
+        mock_model = _make_mock_model()
         with patch(
             "sentence_transformers.SentenceTransformer", return_value=mock_model
         ) as mock_cls:
@@ -197,3 +214,125 @@ class TestFP16Config:
         mock_cls.assert_called_once()
         call_kwargs = mock_cls.call_args[1]
         assert call_kwargs.get("model_kwargs") is None
+
+
+class TestMemoryBounds:
+    """Guards against the MPS abort: an uncapped long input makes the padded
+    batch enormous (attention scales with batch * seq_len^2), and Metal raises
+    a fatal assertion rather than a catchable exception."""
+
+    def test_max_seq_length_clamped_on_load(self, config: EmbeddingConfig) -> None:
+        mock_model = _make_mock_model(max_seq_length=8192)
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+            embedder = SentenceTransformerEmbedder(config)
+            embedder.embed_batch(["text"])
+
+        assert mock_model.max_seq_length == config.max_seq_length
+
+    def test_model_window_left_alone_when_already_smaller(self, config: EmbeddingConfig) -> None:
+        mock_model = _make_mock_model(max_seq_length=512)
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+            embedder = SentenceTransformerEmbedder(config)
+            embedder.embed_batch(["text"])
+
+        assert mock_model.max_seq_length == 512
+
+    def test_long_text_shrinks_the_batch(self, config: EmbeddingConfig) -> None:
+        cfg = config.model_copy(update={"batch_size": 16, "max_batch_tokens": 2048})
+        long_text = "word " * 1000  # ~1002 mock tokens
+        texts = [long_text, *["short text"] * 15]
+        mock_model = _make_mock_model()
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+            embedder = SentenceTransformerEmbedder(cfg)
+            embedder.embed_batch(texts)
+
+        for call in mock_model.encode.call_args_list:
+            batch = call[0][0]
+            padded = len(batch) * max(len(t.split()) + 2 for t in batch)
+            assert padded <= cfg.max_batch_tokens, (
+                f"batch of {len(batch)} padded to {padded} tokens exceeds budget"
+            )
+
+    def test_short_texts_still_batch_up_to_batch_size(self, config: EmbeddingConfig) -> None:
+        mock_model = _make_mock_model()
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+            embedder = SentenceTransformerEmbedder(config)
+            embedder.embed_batch(["short text"] * 16)
+
+        assert mock_model.encode.call_count == 1
+
+    def test_batch_size_is_respected(self, config: EmbeddingConfig) -> None:
+        mock_model = _make_mock_model()
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+            embedder = SentenceTransformerEmbedder(config)
+            embedder.embed_batch(["short text"] * 40)
+
+        assert mock_model.encode.call_count == 3
+        for call in mock_model.encode.call_args_list:
+            assert len(call[0][0]) <= config.batch_size
+
+    def test_vectors_returned_in_input_order(self, config: EmbeddingConfig) -> None:
+        cfg = config.model_copy(update={"batch_size": 4, "max_batch_tokens": 512})
+        texts = [f"{'word ' * (i * 20)}tail{i}" for i in range(12)]
+        counter = {"n": 0}
+
+        def encode(batch: list[str], **_: object) -> np.ndarray:
+            rows = []
+            for text in batch:
+                # Encode the text's identity in the vector so we can verify
+                # the returned order maps back to the input order.
+                marker = float(int(text.rsplit("tail", 1)[1]))
+                rows.append(np.full(1024, marker, dtype=np.float32))
+                counter["n"] += 1
+            return np.stack(rows)
+
+        mock_model = _make_mock_model()
+        mock_model.encode = MagicMock(side_effect=encode)
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+            embedder = SentenceTransformerEmbedder(cfg)
+            results = embedder.embed_batch(texts)
+
+        assert counter["n"] == len(texts)
+        assert mock_model.encode.call_count > 1, "expected multiple micro-batches"
+        assert [vec[0] for vec in results] == [float(i) for i in range(12)]
+
+    def test_empty_input_skips_model_load(self, config: EmbeddingConfig) -> None:
+        with patch("sentence_transformers.SentenceTransformer") as mock_cls:
+            embedder = SentenceTransformerEmbedder(config)
+            assert embedder.embed_batch([]) == []
+            mock_cls.assert_not_called()
+
+    def test_encode_is_serialized_across_threads(self, config: EmbeddingConfig) -> None:
+        # The semantic chunker embeds from the parser thread while the main
+        # thread embeds chunks; concurrent forward passes on one MPS module
+        # are unsafe.
+        import threading
+
+        active = 0
+        overlaps = 0
+        guard = threading.Lock()
+
+        def encode(batch: list[str], **_: object) -> np.ndarray:
+            nonlocal active, overlaps
+            with guard:
+                active += 1
+                if active > 1:
+                    overlaps += 1
+            time.sleep(0.01)
+            with guard:
+                active -= 1
+            return np.random.rand(len(batch), 1024).astype(np.float32)
+
+        mock_model = _make_mock_model()
+        mock_model.encode = MagicMock(side_effect=encode)
+        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
+            embedder = SentenceTransformerEmbedder(config)
+            threads = [
+                threading.Thread(target=embedder.embed_batch, args=(["text"],)) for _ in range(4)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        assert overlaps == 0

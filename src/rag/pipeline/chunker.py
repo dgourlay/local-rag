@@ -42,6 +42,80 @@ def _split_sentences(text: str) -> list[str]:
     return [p for p in parts if p.strip()]
 
 
+def _split_on_token_windows(text: str, max_tokens: int) -> list[str]:
+    """Hard-split ``text`` on token windows, ignoring word boundaries.
+
+    Last-resort splitter for content with no whitespace to break on (base64
+    blobs, long URLs).  Decoding a token window can re-encode to a slightly
+    different length, so each window is verified and narrowed until it fits.
+    """
+    tokens = _encoding.encode(text)
+    pieces: list[str] = []
+    start = 0
+    while start < len(tokens):
+        width = max_tokens
+        piece = _encoding.decode(tokens[start : start + width])
+        while width > 1 and count_tokens(piece) > max_tokens:
+            width //= 2
+            piece = _encoding.decode(tokens[start : start + width])
+        pieces.append(piece)
+        start += width
+    return pieces
+
+
+def split_long_sentence(sentence: str, max_tokens: int) -> list[str]:
+    """Split a sentence into pieces of at most ``max_tokens`` tokens.
+
+    Sentence segmentation only breaks on ``.!?``, so content without sentence
+    punctuation (markdown tables, bullet lists, log dumps) segments into a
+    single arbitrarily long "sentence".  Left unbounded it becomes one huge
+    chunk, which blows up attention memory in the embedder -- a batch is
+    padded to its longest member, and attention scales with the square of
+    that length.
+
+    Splits on whitespace so pieces stay readable, falling back to token
+    windows for runs with no whitespace.
+    """
+    total = count_tokens(sentence)
+    if total <= max_tokens:
+        return [sentence]
+
+    words = sentence.split()
+    word_tokens = [count_tokens(w) for w in words]
+    # Tokens counted per word in isolation drift from the joined count (BPE
+    # merges across word boundaries), so scale the per-word budget by the
+    # drift measured on this sentence.  Keeps packing O(n) instead of
+    # re-tokenizing a growing prefix for every word.
+    isolated = sum(word_tokens) or 1
+    budget = max(1, max_tokens * isolated // total)
+
+    pieces: list[str] = []
+    current: list[str] = []
+    current_tokens = 0
+    for word, tokens in zip(words, word_tokens, strict=True):
+        if current and current_tokens + tokens > budget:
+            pieces.append(" ".join(current))
+            current = []
+            current_tokens = 0
+        current.append(word)
+        current_tokens += tokens
+    if current:
+        pieces.append(" ".join(current))
+
+    # Enforce the cap exactly: the scaled budget lands close but a single
+    # unbreakable word, or uneven drift, can still overshoot.
+    return [
+        part
+        for piece in pieces
+        if piece.strip()
+        for part in (
+            [piece]
+            if count_tokens(piece) <= max_tokens
+            else _split_on_token_windows(piece, max_tokens)
+        )
+    ]
+
+
 def chunk_document(
     doc: NormalizedDocument,
     config: ChunkingConfig | None = None,
@@ -104,6 +178,11 @@ def _chunk_section(
     sentences = _split_sentences(text)
     if not sentences:
         return []
+
+    # Enforce the token cap per sentence so no single chunk can exceed it.
+    sentences = [
+        piece for sentence in sentences for piece in split_long_sentence(sentence, TARGET_TOKENS)
+    ]
 
     chunks: list[Chunk] = []
     current_sentences: list[str] = []

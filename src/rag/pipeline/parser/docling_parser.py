@@ -186,7 +186,7 @@ class DoclingParser:
     """
 
     def __init__(self) -> None:
-        self._worker: multiprocessing.Process | None = None
+        self._worker: multiprocessing.process.BaseProcess | None = None
         self._pipe: multiprocessing.connection.Connection | None = None
 
     @property

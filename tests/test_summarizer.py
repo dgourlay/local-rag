@@ -3,15 +3,13 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from rag.config import SummarizationConfig
 from rag.pipeline.summarizer import (
+    _COMBINED_PROMPT_CHAR_LIMIT,
     BATCH_SECTION_PROMPT_TEMPLATE,
     COMBINED_PROMPT_TEMPLATE,
     MAX_EXCERPT_CHARS,
     CliSummarizer,
-    _COMBINED_PROMPT_CHAR_LIMIT,
     _extract_json,
     _format_sections_text,
 )
@@ -19,7 +17,6 @@ from rag.results import (
     CombinedSummaryError,
     CombinedSummarySuccess,
 )
-
 
 # --- Helpers ---
 
@@ -202,6 +199,47 @@ class TestSummarizeCombined:
         assert result.summary_8w == "Short"
         assert len(result.sections) >= 2
         assert mock_cli.call_count >= 2
+
+    @patch.object(CliSummarizer, "_run_cli")
+    @patch.object(CliSummarizer, "available", new_callable=lambda: property(lambda self: True))
+    def test_oversized_document_keeps_every_prompt_bounded(
+        self, _avail: object, mock_cli: MagicMock,
+    ) -> None:
+        """An oversized document must never reach the CLI as one unbounded prompt."""
+        doc_json = json.dumps({
+            "summary_8w": "Short",
+            "summary_16w": "Medium sentence.",
+            "summary_32w": "Moderate summary.",
+            "summary_64w": "Extended summary.",
+            "summary_128w": "Detailed summary.",
+            "key_topics": ["t1"],
+            "doc_type_guess": "report",
+        })
+        batch_json = _make_batch_sections_json(2)
+        prompts: list[str] = []
+
+        def _record(prompt: str) -> str:
+            # Section batches run on the summarizer's pool; list.append is atomic.
+            prompts.append(prompt)
+            return batch_json if "Sections:" in prompt else doc_json
+
+        mock_cli.side_effect = _record
+        summarizer = _make_summarizer()
+
+        # ~200k chars of sections plus a 250k-char document: far over the limit
+        big_text = "x" * MAX_EXCERPT_CHARS
+        sections = [(f"Section {i}", big_text) for i in range(40)]
+        result = summarizer.summarize_combined("y" * 250_000, "Doc", "txt", sections)
+
+        assert isinstance(result, CombinedSummarySuccess)
+        # Doc summary call plus at least two section batches
+        assert len(prompts) >= 3
+        # Each prompt may carry at most the char limit plus one section's worth
+        # of prompt-template and heading overhead.
+        for prompt in prompts:
+            assert len(prompt) <= _COMBINED_PROMPT_CHAR_LIMIT + MAX_EXCERPT_CHARS, (
+                f"Prompt of {len(prompt)} chars exceeds the combined prompt char limit"
+            )
 
     @patch.object(CliSummarizer, "_run_cli")
     @patch.object(CliSummarizer, "available", new_callable=lambda: property(lambda self: True))

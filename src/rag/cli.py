@@ -5,8 +5,9 @@ import json
 import logging
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import click
 
@@ -163,7 +164,9 @@ def init(add_folder: str | None, set_llm: str | None) -> None:
 
     # 3. LLM CLI
     detected = detect_llm_clis()
-    llm: str | None = None
+    # Same function scope as the non-interactive branch above, which already
+    # annotated `llm` and returned before reaching here.
+    llm = None
     if detected:
         click.echo(f"\nDetected LLM CLI tools: {', '.join(detected)}")
         if len(detected) == 1:
@@ -323,7 +326,8 @@ def _handle_reindex(target: str, config: AppConfig, folder: str | None) -> None:
             click.echo("Nothing to re-index — no documents in the index.")
             return
         click.echo(
-            f"This will purge and re-process all indexed data ({doc_count} documents, {sync_count} tracked files)."
+            "This will purge and re-process all indexed data "
+            f"({doc_count} documents, {sync_count} tracked files)."
         )
         if not click.confirm("Are you sure?"):
             click.echo("Aborted.")
@@ -411,7 +415,7 @@ class _ProgressDisplay:
     _NAME_W = 55
     _HEARTBEAT_INTERVAL = 30  # seconds between heartbeat prints
 
-    _OUTCOME_LABELS: dict[str, tuple[str, str]] = {
+    _OUTCOME_LABELS: ClassVar[dict[str, tuple[str, str]]] = {
         "INDEXED": ("indexed", "green"),
         "UNCHANGED": ("unchanged", "yellow"),
         "DUPLICATE": ("duplicate", "yellow"),
@@ -929,35 +933,51 @@ def mcp_config(print_config: bool, install: str | None) -> None:
         _show_mcp_help()
 
 
-def _show_mcp_help() -> None:
-    """Show MCP config help with auto-detected tools."""
+@dataclass(frozen=True, slots=True)
+class _McpTarget:
+    """A tool that MCP config can be installed for, and how to detect it."""
+
+    key: str
+    label: str
+    cmd: str | None  # CLI to look for on PATH; None means detect another way
+
+
+_CLAUDE_DESKTOP_DIR = "~/Library/Application Support/Claude"
+
+_MCP_TARGETS: tuple[_McpTarget, ...] = (
+    _McpTarget(key="claude-code", label="Claude Code", cmd="claude"),
+    _McpTarget(key="claude-desktop", label="Claude Desktop", cmd=None),
+    _McpTarget(key="kiro", label="Kiro", cmd="kiro"),
+)
+
+
+def _is_mcp_target_installed(target: _McpTarget) -> bool:
+    """Detect a target by its CLI on PATH, or by its app support directory."""
     from shutil import which
 
-    targets = {
-        "claude-code": {"cmd": "claude", "label": "Claude Code"},
-        "claude-desktop": {"cmd": None, "label": "Claude Desktop"},
-        "kiro": {"cmd": "kiro", "label": "Kiro"},
-    }
+    if target.cmd is not None:
+        return which(target.cmd) is not None
+    if target.key == "claude-desktop":
+        return Path(_CLAUDE_DESKTOP_DIR).expanduser().exists()
+    return False
 
+
+def _show_mcp_help() -> None:
+    """Show MCP config help with auto-detected tools."""
     click.echo("Install MCP config for your AI tool:\n")
 
-    detected = []
-    for target, info in targets.items():
-        if info["cmd"] is not None and which(info["cmd"]):
+    detected: list[_McpTarget] = []
+    for target in _MCP_TARGETS:
+        suffix = ""
+        if _is_mcp_target_installed(target):
             detected.append(target)
-            click.echo(f"  rag mcp-config --install {target:<16} # {info['label']} (detected)")
-        elif target == "claude-desktop" and Path(
-            "~/Library/Application Support/Claude"
-        ).expanduser().exists():
-            detected.append(target)
-            click.echo(f"  rag mcp-config --install {target:<16} # {info['label']} (detected)")
-        else:
-            click.echo(f"  rag mcp-config --install {target:<16} # {info['label']}")
+            suffix = " (detected)"
+        click.echo(f"  rag mcp-config --install {target.key:<16} # {target.label}{suffix}")
 
-    click.echo(f"\n  rag mcp-config --print                   # print raw JSON config")
+    click.echo("\n  rag mcp-config --print                   # print raw JSON config")
 
     if detected:
-        click.echo(f"\nDetected: {', '.join(targets[t]['label'] for t in detected)}")
+        click.echo(f"\nDetected: {', '.join(t.label for t in detected)}")
 
 
 if __name__ == "__main__":
