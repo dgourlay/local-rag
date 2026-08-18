@@ -7,7 +7,6 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,13 +41,15 @@ from rag.types import (
 )
 
 if TYPE_CHECKING:
+    from concurrent.futures import Future
+
     from rag.config import AppConfig
     from rag.db.async_upsert import BackgroundUpsertWorker
     from rag.db.models import SqliteMetadataDB
     from rag.db.qdrant import AsyncQdrantVectorStore
     from rag.pipeline.dedup import DedupChecker
     from rag.protocols import Embedder, Parser, Summarizer, VectorStore
-    from rag.types import FileEvent
+    from rag.types import FileEvent, ParsedSection
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,9 @@ class PipelineRunner:
                 msg = f"Parse failed: {result.error}"
                 raise ValueError(msg)
 
-            parsed_doc = result.document
+            parsed_doc = self._with_stable_doc_id(
+                result.document, self._existing_doc_id(file_path)
+            )
 
             # 3. Normalize
             normalized = normalize(parsed_doc)
@@ -229,7 +232,7 @@ class PipelineRunner:
                     return ProcessingOutcome.UNCHANGED, "content unchanged"
 
                 # Different file with same content — record as duplicate
-                doc_id = str(uuid.uuid4())
+                doc_id = existing_doc.doc_id if existing_doc else str(uuid.uuid4())
                 canonical_doc = self._db.get_document(canonical)
                 canonical_name = Path(canonical_doc.file_path).name if canonical_doc else canonical
                 self._db.upsert_document(
@@ -285,6 +288,7 @@ class PipelineRunner:
                 for s in normalized.sections
             ]
             self._db.insert_sections(section_rows)
+            self._db.delete_stale_sections(doc_id, {s.section_id for s in section_rows})
 
             # 8. Chunk
             chunks = chunk_document(normalized, self._config.chunking, self._embedder)
@@ -325,6 +329,7 @@ class PipelineRunner:
                 for c in chunks
             ]
             self._db.insert_chunks(chunk_rows)
+            self._db.delete_stale_chunks(doc_id, {c.chunk_id for c in chunk_rows})
 
             # 10. Embed (using augmented text when questions are available)
             texts = [
@@ -399,10 +404,10 @@ class PipelineRunner:
             self._log(doc_id, file_path, "pipeline", "success", start, f"{len(chunks)} chunks")
             return ProcessingOutcome.INDEXED, f"{len(chunks)} chunks"
 
-        except Exception:
+        except Exception as exc:
             logger.exception("Error processing %s", file_path)
-            self._update_sync_status(file_path, "error", str(file_path))
-            self._log(None, file_path, "pipeline", "error", start, file_path)
+            self._update_sync_status(file_path, "error", str(exc))
+            self._log(None, file_path, "pipeline", "error", start, str(exc))
             return ProcessingOutcome.ERROR, "processing failed"
 
     def process_batch(
@@ -440,11 +445,42 @@ class PipelineRunner:
     # Pipeline parallelism internals
     # ------------------------------------------------------------------
 
-    def _parse_stage(self, event: FileEvent, file_index: int = 0) -> _ParsedFileResult:
+    def _existing_doc_id(self, file_path: str) -> str | None:
+        """Return the doc_id already recorded for ``file_path``, if any.
+
+        Reads SQLite, so it must run on the main thread.
+        """
+        existing = self._db.get_document_by_path(file_path)
+        return existing.doc_id if existing is not None else None
+
+    @staticmethod
+    def _with_stable_doc_id(
+        parsed_doc: ParsedDocument, existing_doc_id: str | None
+    ) -> ParsedDocument:
+        """Pin a re-parsed document back onto the doc_id its path already has.
+
+        Parsers mint a fresh doc_id per parse.  ``documents.file_path`` is
+        UNIQUE and ``upsert_document`` only resolves conflicts on ``doc_id``,
+        so re-indexing a changed file under a new doc_id violates that
+        constraint.  Section, chunk and Qdrant point ids are all UUID5-derived
+        from ``doc_id`` as well, so this has to happen before normalize/chunk
+        for stale vectors to be overwritten rather than orphaned.
+        """
+        if existing_doc_id is None or existing_doc_id == parsed_doc.doc_id:
+            return parsed_doc
+        return parsed_doc.model_copy(update={"doc_id": existing_doc_id})
+
+    def _parse_stage(
+        self,
+        event: FileEvent,
+        file_index: int = 0,
+        existing_doc_id: str | None = None,
+    ) -> _ParsedFileResult:
         """Run the CPU/IO-bound parse stage for a single file.
 
         Runs in the parser thread.  Does NOT touch SQLite or Qdrant --
-        only: classify, parse (subprocess), normalize, chunk.
+        only: classify, parse (subprocess), normalize, chunk.  ``existing_doc_id``
+        is resolved by the caller on the main thread.
         """
         start = time.monotonic()
         file_path = event.file_path
@@ -468,7 +504,7 @@ class PipelineRunner:
             msg = f"Parse failed: {result.error}"
             raise ValueError(msg)
 
-        parsed_doc = result.document
+        parsed_doc = self._with_stable_doc_id(result.document, existing_doc_id)
 
         # 3. Normalize
         normalized = normalize(parsed_doc)
@@ -498,11 +534,13 @@ class PipelineRunner:
         counts: dict[ProcessingOutcome, int] = dict.fromkeys(ProcessingOutcome, 0)
         total = len(events)
 
-        # Pre-filter: skip poisoned and backed-off files before starting threads
-        eligible: list[tuple[int, FileEvent]] = []  # (file_index, event)
+        # Pre-filter: skip poisoned and backed-off files before starting threads.
+        # doc_id lookups happen here because the parser thread cannot touch SQLite.
+        # (file_index, event, existing_doc_id)
+        eligible: list[tuple[int, FileEvent, str | None]] = []
         for file_idx, event in enumerate(events, 1):
             if event.event_type == "deleted":
-                eligible.append((file_idx, event))
+                eligible.append((file_idx, event, None))
                 continue
             existing = self._db.get_sync_state(event.file_path)
             skip = self._check_skip_retry(existing)
@@ -515,7 +553,7 @@ class PipelineRunner:
                         Path(event.file_path).name, outcome, detail,
                     )
                 continue
-            eligible.append((file_idx, event))
+            eligible.append((file_idx, event, self._existing_doc_id(event.file_path)))
 
         processed_count = sum(counts.values())
         batch_size = self._config.embedding.batch_size
@@ -525,7 +563,7 @@ class PipelineRunner:
 
         def _parser_worker() -> None:
             """Parser thread: classify -> parse -> normalize -> chunk."""
-            for file_idx, event in eligible:
+            for file_idx, event, existing_doc_id in eligible:
                 name = Path(event.file_path).name
                 try:
                     # Handle deletions immediately as skip results
@@ -542,7 +580,9 @@ class PipelineRunner:
                     if on_status:
                         on_status(file_idx, total, name, "parsing...")
 
-                    item = self._parse_stage(event, file_index=file_idx)
+                    item = self._parse_stage(
+                        event, file_index=file_idx, existing_doc_id=existing_doc_id
+                    )
                     q.put(item)
                 except Exception as exc:
                     logger.warning("Parse error for %s: %s", event.file_path, exc)
@@ -666,14 +706,12 @@ class PipelineRunner:
                         pr.event.file_path,
                         pr.file_index,
                     )
-                except Exception:
+                except Exception as exc:
                     logger.exception("Error indexing %s", pr.event.file_path)
-                    self._update_sync_status(
-                        pr.event.file_path, "error", str(pr.event.file_path),
-                    )
+                    self._update_sync_status(pr.event.file_path, "error", str(exc))
                     self._log(
                         None, pr.event.file_path, "pipeline", "error",
-                        pr.start, pr.event.file_path,
+                        pr.start, str(exc),
                     )
                     _report_progress(
                         ProcessingOutcome.ERROR,
@@ -733,11 +771,11 @@ class PipelineRunner:
                     start_t = time.monotonic()
                     self._ensure_sync_state(item.event)
                     self._update_sync_status(
-                        item.event.file_path, "error", str(item.event.file_path),
+                        item.event.file_path, "error", item.error_msg,
                     )
                     self._log(
                         None, item.event.file_path, "pipeline", "error",
-                        start_t, item.event.file_path,
+                        start_t, item.error_msg,
                     )
                     _report_progress(
                         ProcessingOutcome.ERROR,
@@ -855,7 +893,7 @@ class PipelineRunner:
 
             # Different file with same content
             self._ensure_sync_state(event)
-            doc_id = str(uuid.uuid4())
+            doc_id = existing_doc.doc_id if existing_doc else str(uuid.uuid4())
             canonical_doc = self._db.get_document(canonical)
             canonical_name = (
                 Path(canonical_doc.file_path).name if canonical_doc else canonical
@@ -953,6 +991,7 @@ class PipelineRunner:
             for s in pr.normalized.sections
         ]
         self._db.insert_sections(section_rows)
+        self._db.delete_stale_sections(doc_id, {s.section_id for s in section_rows})
 
         # Save chunks to DB
         chunk_rows = [
@@ -968,12 +1007,15 @@ class PipelineRunner:
                 section_heading=c.section_heading,
                 citation_label=c.citation_label,
                 token_count=c.token_count,
-                generated_questions=json.dumps(c.generated_questions) if c.generated_questions else None,
+                generated_questions=(
+                    json.dumps(c.generated_questions) if c.generated_questions else None
+                ),
                 embedding_model_version=self._embedder.model_version,
             )
             for c in pr.chunks
         ]
         self._db.insert_chunks(chunk_rows)
+        self._db.delete_stale_chunks(doc_id, {c.chunk_id for c in chunk_rows})
 
         # Build VectorPoints from pre-computed vectors
         points: list[VectorPoint] = []
@@ -1013,7 +1055,12 @@ class PipelineRunner:
         # Summarize (if enabled)
         if on_status and self._summarizer and self._summarizer.available:
             section_count = len([s for s in pr.normalized.sections if s.text.strip()])
-            on_status(pr.file_index, 0, Path(file_path).name, f"summarizing (1 combined call, {section_count} sections)...")
+            on_status(
+                pr.file_index,
+                0,
+                Path(file_path).name,
+                f"summarizing (1 combined call, {section_count} sections)...",
+            )
 
         summary_points = self._summarize_document(
             doc_id=doc_id,
@@ -1132,7 +1179,7 @@ class PipelineRunner:
         file_type: FileType,
         modified_at: str,
         normalized: NormalizedDocument,
-        section_pairs: list[tuple[object, SectionRow]],
+        section_pairs: list[tuple[ParsedSection, SectionRow]],
     ) -> list[VectorPoint]:
         """Process a successful combined summarization result into vector points."""
         # Update document row with doc-level summaries
@@ -1162,7 +1209,7 @@ class PipelineRunner:
 
         # Update section rows with section-level summaries
         section_results: list[tuple[SectionSummarySuccess, SectionRow, int]] = []
-        for i, (section, section_row) in enumerate(section_pairs):
+        for i, (_section, section_row) in enumerate(section_pairs):
             if i < len(combined.sections):
                 sec = combined.sections[i]
                 sec_success = SectionSummarySuccess(
@@ -1197,7 +1244,7 @@ class PipelineRunner:
         file_type: FileType,
         modified_at: str,
         normalized: NormalizedDocument,
-        section_pairs: list[tuple[object, SectionRow]],
+        section_pairs: list[tuple[ParsedSection, SectionRow]],
     ) -> list[VectorPoint]:
         """Fallback: separate doc summary + parallel section summaries."""
         full_text = "\n\n".join(s.text for s in normalized.sections)
@@ -1238,8 +1285,7 @@ class PipelineRunner:
         section_results: list[tuple[SectionSummarySuccess, SectionRow, int]] = []
 
         sections_for_batch: list[tuple[str | None, str]] = [
-            (section.heading, section.text)  # type: ignore[union-attr]
-            for section, _row in section_pairs
+            (section.heading, section.text) for section, _row in section_pairs
         ]
         batch_results = self._summarizer.summarize_sections_batch(  # type: ignore[union-attr]
             sections_for_batch, doc_context,

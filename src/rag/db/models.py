@@ -178,6 +178,20 @@ class SqliteMetadataDB:
         )
         self._conn.commit()
 
+    def delete_stale_sections(self, doc_id: str, keep_ids: set[str]) -> None:
+        """Drop section rows for ``doc_id`` that the current revision no longer has."""
+        stale = [
+            (row["section_id"],)
+            for row in self._conn.execute(
+                "SELECT section_id FROM sections WHERE doc_id = ?", (doc_id,)
+            ).fetchall()
+            if row["section_id"] not in keep_ids
+        ]
+        if not stale:
+            return
+        self._conn.executemany("DELETE FROM sections WHERE section_id = ?", stale)
+        self._conn.commit()
+
     def get_sections(self, doc_id: str) -> list[SectionRow]:
         rows = self._conn.execute(
             "SELECT * FROM sections WHERE doc_id = ? ORDER BY section_order",
@@ -212,6 +226,20 @@ class SqliteMetadataDB:
                 for c in chunks
             ],
         )
+        self._conn.commit()
+
+    def delete_stale_chunks(self, doc_id: str, keep_ids: set[str]) -> None:
+        """Drop chunk rows for ``doc_id`` that the current revision no longer has."""
+        stale = [
+            (row["chunk_id"],)
+            for row in self._conn.execute(
+                "SELECT chunk_id FROM chunks WHERE doc_id = ?", (doc_id,)
+            ).fetchall()
+            if row["chunk_id"] not in keep_ids
+        ]
+        if not stale:
+            return
+        self._conn.executemany("DELETE FROM chunks WHERE chunk_id = ?", stale)
         self._conn.commit()
 
     def get_chunks(self, doc_id: str) -> list[ChunkRow]:

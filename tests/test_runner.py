@@ -18,8 +18,6 @@ from rag.results import (
     CombinedSummarySuccess,
     ParseError,
     ParseSuccess,
-    SectionSummaryError,
-    SectionSummarySuccess,
     SummarySuccess,
 )
 from rag.types import (
@@ -294,6 +292,25 @@ class TestProcessFile:
         assert state.process_status == "error"
         assert state.retry_count == 1
 
+    def test_error_records_the_reason_not_the_path(self, tmp_path: Path) -> None:
+        """rag status shows error_message, so it has to say why the file failed."""
+        conn = _create_db()
+        event = _make_event(tmp_path)
+        runner, mocks = _make_runner(tmp_path, conn)
+        mocks["embedder"].embed_batch.side_effect = RuntimeError("embedder exploded")
+
+        outcome, _detail = runner.process_file(event)
+
+        assert outcome == ProcessingOutcome.ERROR
+        state = mocks["db"].get_sync_state(str(tmp_path / "test.txt"))
+        assert state is not None
+        assert state.error_message == "embedder exploded"
+        details = conn.execute(
+            "SELECT details FROM processing_log WHERE status = 'error'"
+        ).fetchone()
+        assert details is not None
+        assert details[0] == "embedder exploded"
+
     def test_poison_after_three_retries(self, tmp_path: Path) -> None:
         conn = _create_db()
         event = _make_event(tmp_path)
@@ -309,6 +326,154 @@ class TestProcessFile:
         assert state is not None
         assert state.process_status == "poison"
         assert state.retry_count == 3
+
+
+def _modified_parse_result(file_path: str) -> ParseSuccess:
+    """A second parse of the same path: fresh doc_id, different content."""
+    return ParseSuccess(
+        document=ParsedDocument(
+            doc_id=str(uuid.uuid4()),
+            title="Test Document",
+            file_type=FileType.TXT,
+            sections=[
+                ParsedSection(
+                    heading="Introduction",
+                    order=0,
+                    text=(
+                        "The document was edited after the first index run."
+                        " This replacement text hashes differently from the original."
+                    ),
+                ),
+            ],
+            raw_content_hash="rawhash456",
+        )
+    )
+
+
+def _modified_event(tmp_path: Path) -> FileEvent:
+    """Event for the same path with a changed file content hash."""
+    return FileEvent(
+        file_path=str(tmp_path / "test.txt"),
+        content_hash="def456hash",
+        file_type=FileType.TXT,
+        event_type="modified",
+        modified_at="2026-01-02T00:00:00+00:00",
+    )
+
+
+class TestReindexKeepsDocId:
+    """Re-indexing a changed file must reuse the doc_id already on that path.
+
+    ``documents.file_path`` is UNIQUE and ``upsert_document`` only resolves
+    conflicts on ``doc_id``, so a fresh per-parse doc_id made every in-place
+    re-index fail with ``UNIQUE constraint failed: documents.file_path``.
+    """
+
+    def test_process_file_reuses_existing_doc_id(self, tmp_path: Path) -> None:
+        conn = _create_db()
+        file_path = str(tmp_path / "test.txt")
+        runner, mocks = _make_runner(tmp_path, conn)
+
+        assert runner.process_file(_make_event(tmp_path))[0] == ProcessingOutcome.INDEXED
+        first = mocks["db"].get_document_by_path(file_path)
+        assert first is not None
+
+        (tmp_path / "test.txt").write_text("edited content")
+        mocks["parser"].parse.return_value = _modified_parse_result(file_path)
+
+        outcome, _detail = runner.process_file(_modified_event(tmp_path))
+
+        assert outcome == ProcessingOutcome.INDEXED
+        second = mocks["db"].get_document_by_path(file_path)
+        assert second is not None
+        assert second.doc_id == first.doc_id
+        assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 1
+
+    def test_process_batch_reuses_existing_doc_id(self, tmp_path: Path) -> None:
+        conn = _create_db()
+        file_path = str(tmp_path / "test.txt")
+        runner, mocks = _make_runner(tmp_path, conn)
+
+        counts = runner.process_batch([_make_event(tmp_path)])
+        assert counts[ProcessingOutcome.INDEXED] == 1
+        first = mocks["db"].get_document_by_path(file_path)
+        assert first is not None
+
+        (tmp_path / "test.txt").write_text("edited content")
+        mocks["parser"].parse.return_value = _modified_parse_result(file_path)
+
+        counts = runner.process_batch([_modified_event(tmp_path)])
+
+        assert counts[ProcessingOutcome.INDEXED] == 1
+        second = mocks["db"].get_document_by_path(file_path)
+        assert second is not None
+        assert second.doc_id == first.doc_id
+
+    def test_reindexed_chunks_and_sections_stay_under_one_doc_id(
+        self, tmp_path: Path
+    ) -> None:
+        """Chunk/section ids derive from doc_id, so they must follow the reuse."""
+        conn = _create_db()
+        file_path = str(tmp_path / "test.txt")
+        runner, mocks = _make_runner(tmp_path, conn)
+
+        runner.process_file(_make_event(tmp_path))
+        doc = mocks["db"].get_document_by_path(file_path)
+        assert doc is not None
+
+        (tmp_path / "test.txt").write_text("edited content")
+        mocks["parser"].parse.return_value = _modified_parse_result(file_path)
+        runner.process_file(_modified_event(tmp_path))
+
+        chunk_doc_ids = {
+            row[0] for row in conn.execute("SELECT DISTINCT doc_id FROM chunks").fetchall()
+        }
+        section_doc_ids = {
+            row[0] for row in conn.execute("SELECT DISTINCT doc_id FROM sections").fetchall()
+        }
+        assert chunk_doc_ids == {doc.doc_id}
+        assert section_doc_ids == {doc.doc_id}
+
+    def test_shrinking_document_drops_stale_chunks_and_sections(
+        self, tmp_path: Path
+    ) -> None:
+        """Rows the new revision no longer produces must not survive a re-index.
+
+        Their Qdrant points are pruned by ``delete_stale_points``, so leaving the
+        SQLite rows behind would serve deleted text via get_document_context.
+        """
+        conn = _create_db()
+        file_path = str(tmp_path / "test.txt")
+        runner, mocks = _make_runner(tmp_path, conn)
+
+        long_sections = [
+            ParsedSection(heading=f"Section {i}", order=i, text=" ".join(["filler"] * 600))
+            for i in range(3)
+        ]
+        mocks["parser"].parse.return_value = ParseSuccess(
+            document=ParsedDocument(
+                doc_id=str(uuid.uuid4()),
+                title="Test Document",
+                file_type=FileType.TXT,
+                sections=long_sections,
+                raw_content_hash="rawhash_long",
+            )
+        )
+        runner.process_file(_make_event(tmp_path))
+        first_chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        assert first_chunks > 1
+
+        (tmp_path / "test.txt").write_text("edited content")
+        mocks["parser"].parse.return_value = _modified_parse_result(file_path)
+        runner.process_file(_modified_event(tmp_path))
+
+        doc = mocks["db"].get_document_by_path(file_path)
+        assert doc is not None
+        remaining_chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        remaining_sections = conn.execute("SELECT COUNT(*) FROM sections").fetchone()[0]
+        assert remaining_chunks < first_chunks
+        assert remaining_chunks == len(mocks["db"].get_chunks(doc.doc_id))
+        assert remaining_sections == 1
 
 
 class TestProcessBatch:
@@ -577,7 +742,7 @@ class TestSummarizationBatchEmbedding:
         assert mocks["embedder"].embed_batch.call_count == 1
 
     def test_section_failure_does_not_block_others(self, tmp_path: Path) -> None:
-        """If combined fails and one section is missing in fallback batch, others still produce points."""
+        """Combined fails and one fallback section is missing: others still produce points."""
         conn = _create_db()
         num_sections = 3
 
