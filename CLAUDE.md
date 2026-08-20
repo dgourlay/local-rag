@@ -91,6 +91,7 @@ rag search "query"                # CLI search for testing
 rag search "query" --debug        # Search with per-lane counts, weights, timing
 rag search "query" --top-k 5      # Limit number of results
 rag mcp-config --print            # Print MCP config JSON snippet
+rag mcp-config --install codex    # Install MCP entry (claude-desktop|claude-code|kiro|codex)
 ```
 
 ## Conventions

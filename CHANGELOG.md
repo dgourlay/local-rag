@@ -2,6 +2,14 @@
 
 All notable changes to local-rag are documented here.
 
+## [Unreleased]
+
+### Added
+- **Codex MCP target**: `rag mcp-config --install codex` writes a `[mcp_servers.local-rag]` table to `~/.codex/config.toml`, merging into existing settings and safe to re-run
+- `rag mcp-config` lists Codex among auto-detected targets when the `codex` CLI is on PATH
+
+---
+
 ## [v0.5.0] - 2026-03-16
 
 Intelligence upgrade: semantic chunking, auto-generated questions, and MCP tool guidance make search smarter and more precise.
@@ -110,6 +118,7 @@ Initial working system: complete indexing pipeline from filesystem scan through 
 - Ruff formatting and linting, mypy strict mode
 - Docs and setup scripts
 
+[Unreleased]: https://github.com/dgourlay/local-rag/compare/v0.5.0...HEAD
 [v0.5.0]: https://github.com/dgourlay/local-rag/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/dgourlay/local-rag/compare/v0.3.0...v0.4.0
 [v0.3.0]: https://github.com/dgourlay/local-rag/compare/v0.2.0...v0.3.0

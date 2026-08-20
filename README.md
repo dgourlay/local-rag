@@ -146,6 +146,34 @@ kiro-cli mcp add \
 
 Run `rag mcp-config --print` to get the exact Python path for your venv.
 
+### Codex
+
+**Option A -- auto-install:**
+
+```bash
+rag mcp-config --install codex
+```
+
+This writes to `~/.codex/config.toml`. Codex uses TOML rather than JSON, so the
+entry is merged into your existing config without disturbing other settings --
+re-running the command is safe. Verified with Codex CLI 0.146.1.
+
+**Option B -- manual:** Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.local-rag]
+command = "/path/to/local-rag/.venv/bin/python"
+args = ["-m", "rag.cli", "serve"]
+```
+
+Note the snake_case `mcp_servers` key -- that is Codex's format, not the
+`mcpServers` key used by the JSON-based clients above.
+
+Run `rag mcp-config` with no flags to confirm Codex is detected, or
+`rag mcp-config --print` to get the exact Python path for your venv.
+
+Restart Codex after adding the config.
+
 ### MCP prompts (slash commands)
 
 The server registers three prompts, available as slash commands in Claude Code:
@@ -199,7 +227,7 @@ to the correct venv.
 | `rag status` | Dashboard showing document/chunk/error counts, MCP health, liveness |
 | `rag doctor` | Health check -- verifies Qdrant, models, folders |
 | `rag search "query"` | CLI search for testing (`--debug` for lane/weight details, `--top-k N`) |
-| `rag mcp-config` | Print or install MCP config (`--print`, `--install`) |
+| `rag mcp-config` | Print or install MCP config (`--print`, `--install claude-code\|claude-desktop\|kiro\|codex`) |
 
 
 ## Configuration
@@ -350,6 +378,7 @@ rm -rf ~/.config/local-rag
 #    Claude Code:    ~/.claude.json
 #    Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json
 #    Kiro:           ~/.kiro/settings/mcp.json
+#    Codex:          ~/.codex/config.toml (remove the [mcp_servers.local-rag] table)
 
 # 6. Uninstall the Python package
 pip uninstall local-rag
@@ -386,3 +415,7 @@ what's happening at each stage.
 **MCP not working in Claude Desktop** -- Run `rag mcp-config --print` and
 verify the Python path points to your venv. Restart Claude Desktop after
 config changes.
+
+**MCP not working in Codex** -- `~/.codex/config.toml` is TOML, not JSON, and
+the table must be `[mcp_servers.local-rag]` (snake_case). Re-run
+`rag mcp-config --install codex` to write it correctly, then restart Codex.

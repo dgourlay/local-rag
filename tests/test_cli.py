@@ -59,6 +59,23 @@ class TestMcpConfig:
         assert result.exit_code == 0
         assert "--print" in result.output
 
+    def test_no_flags_lists_all_targets(self, runner: CliRunner) -> None:
+        result = runner.invoke(main, ["mcp-config"])
+        assert result.exit_code == 0
+        for target in ["claude-code", "claude-desktop", "kiro", "codex"]:
+            assert f"--install {target}" in result.output
+
+    def test_install_accepts_codex(self, runner: CliRunner) -> None:
+        with patch("rag.init.install_mcp_config", return_value=True) as mock_install:
+            result = runner.invoke(main, ["mcp-config", "--install", "codex"])
+        assert result.exit_code == 0
+        assert "installed for codex" in result.output
+        mock_install.assert_called_once_with("codex")
+
+    def test_install_rejects_unknown_target(self, runner: CliRunner) -> None:
+        result = runner.invoke(main, ["mcp-config", "--install", "nope"])
+        assert result.exit_code != 0
+
 
 class TestDoctor:
     @patch("rag.config.load_config")
