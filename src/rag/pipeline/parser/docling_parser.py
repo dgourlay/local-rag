@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from rag.config import ParsingConfig
 from rag.results import ParseError, ParseSuccess
 from rag.types import FileType, ParsedDocument, ParsedSection
 
@@ -17,22 +18,21 @@ ParseError.model_rebuild()
 
 logger = logging.getLogger(__name__)
 
-_PARSE_TIMEOUT_BASE = 60       # minimum seconds for any file
-_PARSE_TIMEOUT_PER_MB = 30     # additional seconds per megabyte
-_PARSE_TIMEOUT_CAP = 600       # hard upper limit
 
+def _compute_parse_timeout(file_path: str, config: ParsingConfig) -> int:
+    """Compute parse timeout from file size.
 
-def _compute_parse_timeout(file_path: str) -> int:
-    """Compute parse timeout based on file size.
-
-    Base 60s + 30s per MB, clamped to [60, 600].
+    ``timeout_base_seconds + timeout_per_mb_seconds * MB``, clamped to
+    ``[timeout_base_seconds, timeout_cap_seconds]``. Size alone is a weak proxy
+    for parse cost -- an OCR-heavy scan can be small and still take minutes --
+    so the base acts as a floor generous enough for those files.
     """
     try:
         size_mb = Path(file_path).stat().st_size / (1024 * 1024)
     except OSError:
-        return _PARSE_TIMEOUT_BASE
-    computed = int(_PARSE_TIMEOUT_BASE + size_mb * _PARSE_TIMEOUT_PER_MB)
-    return min(max(_PARSE_TIMEOUT_BASE, computed), _PARSE_TIMEOUT_CAP)
+        return config.timeout_base_seconds
+    computed = int(config.timeout_base_seconds + size_mb * config.timeout_per_mb_seconds)
+    return min(max(config.timeout_base_seconds, computed), config.timeout_cap_seconds)
 
 
 def _worker_loop(
@@ -185,7 +185,8 @@ class DoclingParser:
     and reused across parse calls, while keeping memory isolated from the parent.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, config: ParsingConfig | None = None) -> None:
+        self._config = config or ParsingConfig()
         self._worker: multiprocessing.process.BaseProcess | None = None
         self._pipe: multiprocessing.connection.Connection | None = None
 
@@ -255,7 +256,7 @@ class DoclingParser:
             pipe.send((file_path, ocr_enabled))
 
             # Wait for response with file-size-based timeout
-            timeout = _compute_parse_timeout(file_path)
+            timeout = _compute_parse_timeout(file_path, self._config)
             if not pipe.poll(timeout=timeout):
                 logger.error(
                     "Docling worker timed out after %ds for %s",

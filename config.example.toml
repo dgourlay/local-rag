@@ -35,6 +35,15 @@ paths = ["~/Documents", "~/Work"]
 # args = ["--print", "--max-tokens", "2048"]
 # timeout_seconds = 60
 
+# [parsing]
+# Docling parse timeout = timeout_base_seconds + timeout_per_mb_seconds * MB,
+# clamped to [timeout_base_seconds, timeout_cap_seconds]. Raise the base if
+# scanned/OCR-heavy PDFs time out -- those are often small files whose parse
+# cost is driven by page count and image complexity rather than size.
+# timeout_base_seconds = 300
+# timeout_per_mb_seconds = 30
+# timeout_cap_seconds = 600
+
 # [chunking]
 # strategy = "fixed"              # "fixed" (default) or "semantic"
 # similarity_threshold = 0.35     # semantic only: boundary detection threshold

@@ -51,7 +51,10 @@ def _init_components(
 
     summarizer = CliSummarizer(config.summarization)
 
-    parser_list: list[DoclingParser | TextParser] = [DoclingParser(), TextParser()]
+    parser_list: list[DoclingParser | TextParser] = [
+        DoclingParser(config.parsing),
+        TextParser(),
+    ]
 
     runner = PipelineRunner(
         db=db,

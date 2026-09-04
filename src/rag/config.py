@@ -109,6 +109,16 @@ class SummarizationConfig(BaseModel):
         return self
 
 
+class ParsingConfig(BaseModel):
+    # Parse cost tracks page count and image complexity, not bytes, so a purely
+    # size-derived timeout starves OCR-heavy scans: a 0.4MB scanned PDF got 72s
+    # under the previous base of 60 and reliably timed out. The base is the floor
+    # that such files rely on.
+    timeout_base_seconds: int = 300
+    timeout_per_mb_seconds: int = 30
+    timeout_cap_seconds: int = 600
+
+
 class QuestionsConfig(BaseModel):
     enabled: bool = True
 
@@ -136,6 +146,7 @@ class AppConfig(BaseModel):
     qdrant: QdrantConfig = QdrantConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     chunking: ChunkingConfig = ChunkingConfig()
+    parsing: ParsingConfig = ParsingConfig()
     reranker: RerankerConfig = RerankerConfig()
     summarization: SummarizationConfig = SummarizationConfig()
     questions: QuestionsConfig = QuestionsConfig()

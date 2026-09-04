@@ -4,8 +4,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+from rag.config import ParsingConfig
 from rag.pipeline.parser.base import get_parser
-from rag.pipeline.parser.docling_parser import DoclingParser
+from rag.pipeline.parser.docling_parser import DoclingParser, _compute_parse_timeout
 from rag.pipeline.parser.text_parser import TextParser
 from rag.results import ParseError, ParseSuccess
 from rag.types import FileType
@@ -38,6 +39,40 @@ def _patch_worker(
 
     parser._pipe = mock_pipe
     parser._worker = mock_proc
+
+
+class TestComputeParseTimeout:
+    def test_small_file_gets_a_generous_timeout_from_the_base(self, tmp_path: Path) -> None:
+        # A 0.4MB OCR-heavy scan is the case this guards: size contributes only
+        # ~11s, so under the old base of 60 it got 72s and reliably timed out
+        # despite needing minutes. The base is what makes it survivable.
+        f = tmp_path / "scan.pdf"
+        f.write_bytes(b"x" * (400 * 1024))
+        cfg = ParsingConfig()
+        got = _compute_parse_timeout(str(f), cfg)
+        assert got >= cfg.timeout_base_seconds
+        assert got == 311  # 300 base + 0.39MB * 30
+
+    def test_size_adds_on_top_of_the_base(self, tmp_path: Path) -> None:
+        f = tmp_path / "big.pdf"
+        f.write_bytes(b"x" * (4 * 1024 * 1024))
+        cfg = ParsingConfig(timeout_base_seconds=100, timeout_per_mb_seconds=10)
+        assert _compute_parse_timeout(str(f), cfg) == 140
+
+    def test_clamped_to_cap(self, tmp_path: Path) -> None:
+        f = tmp_path / "huge.pdf"
+        f.write_bytes(b"x" * (2 * 1024 * 1024))
+        cfg = ParsingConfig(
+            timeout_base_seconds=10, timeout_per_mb_seconds=1000, timeout_cap_seconds=500
+        )
+        assert _compute_parse_timeout(str(f), cfg) == 500
+
+    def test_missing_file_falls_back_to_base(self) -> None:
+        cfg = ParsingConfig(timeout_base_seconds=77)
+        assert _compute_parse_timeout("/nonexistent/file.pdf", cfg) == 77
+
+    def test_parser_defaults_config_when_none_passed(self) -> None:
+        assert DoclingParser()._config == ParsingConfig()
 
 
 class TestDoclingParserSupportedTypes:
