@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from rag.cli import _PathClaims
 from rag.types import FileEvent, ProcessingOutcome, SyncStateRow
 
 # --- Helper to build a fake SyncStateRow ---
@@ -20,6 +21,69 @@ def _make_sync_state(file_path: str, content_hash: str = "abc123") -> SyncStateR
         modified_at="2026-01-01T00:00:00+00:00",
         content_hash=content_hash,
     )
+
+
+# --- Path claiming: stops the re-scan thread and the live watcher from
+#     indexing the same file concurrently ---
+
+
+class TestPathClaims:
+    """Guards the UNIQUE constraint failed: documents.file_path race."""
+
+    def test_first_claim_is_granted(self) -> None:
+        claims = _PathClaims()
+        assert claims.claim(["/docs/a.pdf", "/docs/b.pdf"]) == ["/docs/a.pdf", "/docs/b.pdf"]
+
+    def test_second_claim_on_a_held_path_is_refused(self) -> None:
+        # This is the actual bug: the re-scan thread holds a path, the live
+        # watcher must not also hand it to process_batch.
+        claims = _PathClaims()
+        claims.claim(["/docs/a.pdf"])
+        assert claims.claim(["/docs/a.pdf"]) == []
+
+    def test_refuses_only_the_overlap(self) -> None:
+        claims = _PathClaims()
+        claims.claim(["/docs/a.pdf"])
+        assert claims.claim(["/docs/a.pdf", "/docs/b.pdf"]) == ["/docs/b.pdf"]
+
+    def test_release_allows_reclaiming(self) -> None:
+        claims = _PathClaims()
+        claims.claim(["/docs/a.pdf"])
+        claims.release(["/docs/a.pdf"])
+        assert claims.claim(["/docs/a.pdf"]) == ["/docs/a.pdf"]
+
+    def test_release_of_unheld_path_is_harmless(self) -> None:
+        claims = _PathClaims()
+        claims.release(["/docs/never-claimed.pdf"])
+        assert claims.claim(["/docs/never-claimed.pdf"]) == ["/docs/never-claimed.pdf"]
+
+    def test_duplicate_paths_in_one_call_granted_once(self) -> None:
+        claims = _PathClaims()
+        assert claims.claim(["/docs/a.pdf", "/docs/a.pdf"]) == ["/docs/a.pdf"]
+
+    def test_concurrent_claims_grant_each_path_exactly_once(self) -> None:
+        """Two threads racing on the same paths: every path goes to one winner."""
+        claims = _PathClaims()
+        paths = [f"/docs/{i}.pdf" for i in range(200)]
+        granted: list[list[str]] = []
+        lock = threading.Lock()
+        start = threading.Barrier(2)
+
+        def worker() -> None:
+            start.wait(timeout=5)
+            mine = claims.claim(paths)
+            with lock:
+                granted.append(mine)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        all_granted = [p for batch in granted for p in batch]
+        assert sorted(all_granted) == sorted(paths)
+        assert len(all_granted) == len(set(all_granted))
 
 
 # --- Task 1: process_batch output formatting ---

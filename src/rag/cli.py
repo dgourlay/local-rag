@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,11 +13,53 @@ from typing import TYPE_CHECKING, ClassVar
 import click
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from rag.config import AppConfig
     from rag.db.models import SqliteMetadataDB
     from rag.pipeline.runner import PipelineRunner
     from rag.retrieval.engine import RetrievalEngine
     from rag.types import FileEvent
+
+
+class _PathClaims:
+    """Grants one owner at a time to each file path under `watch`.
+
+    `watch` runs two independent producers -- the startup re-scan thread and the
+    live watchdog handler -- and both fed the same path to `process_batch`
+    concurrently. Two workers then raced to insert the same
+    `documents.file_path` and the loser died on the UNIQUE constraint.
+
+    Claiming is per path and first-come: whoever claims a path processes it, and
+    the other producer skips it for this round. Skipping is safe because the
+    winner reads the file at process time, so it picks up whatever the other
+    producer saw. A path that changes *again* while claimed is not re-queued, so
+    the next filesystem event for it is what brings it back.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._in_flight: set[str] = set()
+
+    def claim(self, paths: Iterable[str]) -> list[str]:
+        """Return the subset of `paths` the caller now owns, in input order.
+
+        Each path is recorded as it is granted, not in a batch afterwards, so a
+        path repeated within one call is granted once rather than twice.
+        """
+        with self._lock:
+            granted: list[str] = []
+            for path in paths:
+                if path in self._in_flight:
+                    continue
+                self._in_flight.add(path)
+                granted.append(path)
+            return granted
+
+    def release(self, paths: Iterable[str]) -> None:
+        """Give up ownership. Must run even when processing raised."""
+        with self._lock:
+            self._in_flight.difference_update(paths)
 
 
 def _init_components(
@@ -579,8 +622,6 @@ def serve(use_http: bool) -> None:
 @click.option("--daemon", is_flag=True, help="Run in background (not yet implemented).")
 def watch(daemon: bool) -> None:
     """Watch configured folders for changes and auto-index."""
-    import threading
-
     from watchdog.events import FileSystemEventHandler
     from watchdog.observers import Observer
 
@@ -596,11 +637,16 @@ def watch(daemon: bool) -> None:
 
     # Track known file paths so we can detect deletions
     known_paths: set[str] = set(db.get_all_tracked_paths())
+    claims = _PathClaims()
 
     class _Handler(FileSystemEventHandler):
         def __init__(self) -> None:
             self._pending: dict[str, float] = {}
             self._debounce = config.watcher.debounce_seconds
+            # on_any_event runs on the observer thread while flush() runs on the
+            # main loop, so an unlocked dict could be mutated mid-iteration
+            # ("dictionary changed size during iteration").
+            self._lock = threading.Lock()
 
         def on_any_event(self, event: object) -> None:
             src_path: str | None = getattr(event, "src_path", None)
@@ -611,13 +657,15 @@ def watch(daemon: bool) -> None:
             ft = classify_file_type(path)
             if ft is None:
                 return
-            self._pending[src_path] = time.monotonic()
+            with self._lock:
+                self._pending[src_path] = time.monotonic()
 
         def flush(self) -> list[str]:
             now = time.monotonic()
-            ready = [p for p, t in self._pending.items() if now - t >= self._debounce]
-            for p in ready:
-                del self._pending[p]
+            with self._lock:
+                ready = [p for p, t in self._pending.items() if now - t >= self._debounce]
+                for p in ready:
+                    del self._pending[p]
             return ready
 
     def _format_counts(counts: dict[ProcessingOutcome, int], total: int) -> str:
@@ -642,22 +690,30 @@ def watch(daemon: bool) -> None:
                 db.get_sync_state,
                 db.get_all_tracked_paths,
             )
+            # The observer is already running by now, so a path this scan found
+            # may also be sitting in the handler's pending map. Claim before
+            # processing so only one of us indexes it.
+            owned = set(claims.claim([ev.file_path for ev in events]))
+            events = [ev for ev in events if ev.file_path in owned]
             if events:
                 click.echo(f"Startup re-scan found {len(events)} changes.")
-                display = _ProgressDisplay(len(events))
-                counts = runner.process_batch(
-                    events,
-                    progress=display.on_done,
-                    on_start=display.on_start,
-                    on_status=display.on_status,
-                )
-                click.echo(f"  {_format_counts(counts, len(events))}")
-                # Update known paths after re-scan
-                for ev in events:
-                    if ev.event_type == "deleted":
-                        known_paths.discard(ev.file_path)
-                    else:
-                        known_paths.add(ev.file_path)
+                try:
+                    display = _ProgressDisplay(len(events))
+                    counts = runner.process_batch(
+                        events,
+                        progress=display.on_done,
+                        on_start=display.on_start,
+                        on_status=display.on_status,
+                    )
+                    click.echo(f"  {_format_counts(counts, len(events))}")
+                    # Update known paths after re-scan
+                    for ev in events:
+                        if ev.event_type == "deleted":
+                            known_paths.discard(ev.file_path)
+                        else:
+                            known_paths.add(ev.file_path)
+                finally:
+                    claims.release(owned)
             else:
                 click.echo("Startup re-scan: no changes detected.")
         except Exception as exc:
@@ -680,7 +736,9 @@ def watch(daemon: bool) -> None:
     try:
         while True:
             time.sleep(config.watcher.batch_window_seconds)
-            ready = handler.flush()
+            # Skip paths the startup re-scan is still working on; it will finish
+            # them, and a second pass here would race its inserts.
+            ready = claims.claim(handler.flush())
             if ready:
                 from datetime import UTC, datetime
 
@@ -737,6 +795,10 @@ def watch(daemon: bool) -> None:
                             known_paths.discard(ev.file_path)
                         else:
                             known_paths.add(ev.file_path)
+                # Released without a finally on purpose: only KeyboardInterrupt is
+                # handled below, so any other exception ends `watch` outright and
+                # a still-held claim cannot outlive it.
+                claims.release(ready)
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
