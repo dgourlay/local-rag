@@ -82,6 +82,9 @@ class _ParseErrorResult:
     event: FileEvent
     file_index: int
     error_msg: str
+    #: Underlying failure, recorded in sync_state/processing_log so `rag status`
+    #: can say why.  ``error_msg`` stays short for the progress display.
+    reason: str | None = None
 
 
 # Items that flow through the producer-consumer queue.
@@ -588,7 +591,7 @@ class PipelineRunner:
                     logger.warning("Parse error for %s: %s", event.file_path, exc)
                     q.put(_ParseErrorResult(
                         event=event, file_index=file_idx,
-                        error_msg="processing failed",
+                        error_msg="processing failed", reason=str(exc),
                     ))
             # Sentinel: signal the consumer that we are done
             q.put(None)
@@ -770,12 +773,13 @@ class PipelineRunner:
                 else:
                     start_t = time.monotonic()
                     self._ensure_sync_state(item.event)
+                    failure = item.reason or item.error_msg
                     self._update_sync_status(
-                        item.event.file_path, "error", item.error_msg,
+                        item.event.file_path, "error", failure,
                     )
                     self._log(
                         None, item.event.file_path, "pipeline", "error",
-                        start_t, item.error_msg,
+                        start_t, failure,
                     )
                     _report_progress(
                         ProcessingOutcome.ERROR,

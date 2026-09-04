@@ -311,6 +311,21 @@ class TestProcessFile:
         assert details is not None
         assert details[0] == "embedder exploded"
 
+    def test_batch_parse_failure_records_the_parse_error(self, tmp_path: Path) -> None:
+        """The parser thread's reason has to survive the hop to the main thread."""
+        conn = _create_db()
+        event = _make_event(tmp_path)
+        parse_err = ParseError(error="corrupt file", file_path=str(tmp_path / "test.txt"))
+        runner, mocks = _make_runner(tmp_path, conn, parse_result=parse_err)
+
+        counts = runner.process_batch([event])
+
+        assert counts[ProcessingOutcome.ERROR] == 1
+        state = mocks["db"].get_sync_state(str(tmp_path / "test.txt"))
+        assert state is not None
+        assert state.error_message is not None
+        assert "corrupt file" in state.error_message
+
     def test_poison_after_three_retries(self, tmp_path: Path) -> None:
         conn = _create_db()
         event = _make_event(tmp_path)
