@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import sqlite3
 import threading
 import time
 import uuid
@@ -90,6 +91,22 @@ class _ParseErrorResult:
 # Items that flow through the producer-consumer queue.
 # None is the sentinel signaling the parser thread is done.
 _QueueItem = _ParsedFileResult | _ParseErrorResult | None
+
+#: SQLite's message for the UNIQUE index that two concurrent indexing runs of one
+#: file collide on. Matched as a substring so an unrelated IntegrityError -- a
+#: foreign-key break, say -- still propagates instead of being swallowed.
+_DOCUMENTS_PATH_CONSTRAINT = "documents.file_path"
+
+
+class _ConcurrentIndexSkipError(Exception):
+    """Another process indexed this path while we were parsing it.
+
+    Signalled as an exception rather than a return value because
+    ``_index_parsed_file`` returns ``None`` and its caller drives progress
+    reporting; this has to reach that caller so the file is reported as skipped
+    rather than indexed, and so its content hash is not registered for dedup
+    against work we abandoned.
+    """
 
 
 class PipelineRunner:
@@ -709,6 +726,17 @@ class PipelineRunner:
                         pr.event.file_path,
                         pr.file_index,
                     )
+                except _ConcurrentIndexSkipError:
+                    # Not a failure: the other run's row is current and we wrote
+                    # nothing. Deliberately skips register_hash above -- our
+                    # doc_id was abandoned, so registering it would make later
+                    # files dedup against a document that does not exist.
+                    _report_progress(
+                        ProcessingOutcome.UNCHANGED,
+                        "indexed concurrently by another run",
+                        pr.event.file_path,
+                        pr.file_index,
+                    )
                 except Exception as exc:
                     logger.exception("Error indexing %s", pr.event.file_path)
                     self._update_sync_status(pr.event.file_path, "error", str(exc))
@@ -963,24 +991,43 @@ class PipelineRunner:
             )
         )
 
-        # Save document metadata
-        self._db.upsert_document(
-            DocumentRow(
-                doc_id=doc_id,
-                file_path=file_path,
-                folder_path=pr.folder_path,
-                folder_ancestors=pr.folder_ancestors,
-                title=parsed_doc.title,
-                file_type=event.file_type.value,
-                modified_at=event.modified_at,
-                raw_content_hash=pr.normalized.raw_content_hash,
-                normalized_content_hash=pr.normalized.normalized_content_hash,
-                ocr_required=1 if parsed_doc.ocr_required else 0,
-                ocr_confidence=parsed_doc.ocr_confidence,
-                embedding_model_version=self._embedder.model_version,
-                chunker_version=get_chunker_version(self._config.chunking.strategy),
+        # Save document metadata.
+        #
+        # This is the first write of the file's own data, so a lost race here is
+        # clean to abandon: nothing of ours is on disk yet, and the sections,
+        # chunks and Qdrant points below all derive their ids from our doc_id.
+        try:
+            self._db.upsert_document(
+                DocumentRow(
+                    doc_id=doc_id,
+                    file_path=file_path,
+                    folder_path=pr.folder_path,
+                    folder_ancestors=pr.folder_ancestors,
+                    title=parsed_doc.title,
+                    file_type=event.file_type.value,
+                    modified_at=event.modified_at,
+                    raw_content_hash=pr.normalized.raw_content_hash,
+                    normalized_content_hash=pr.normalized.normalized_content_hash,
+                    ocr_required=1 if parsed_doc.ocr_required else 0,
+                    ocr_confidence=parsed_doc.ocr_confidence,
+                    embedding_model_version=self._embedder.model_version,
+                    chunker_version=get_chunker_version(self._config.chunking.strategy),
+                )
             )
-        )
+        except sqlite3.IntegrityError as exc:
+            if _DOCUMENTS_PATH_CONSTRAINT not in str(exc):
+                raise
+            # Another *process* -- `rag index` alongside `rag watch`, typically --
+            # indexed this path while we were parsing. Both runs resolve doc_id
+            # before writing, so both saw no existing row and minted their own
+            # UUID; ours now collides on the UNIQUE documents.file_path. No
+            # in-process lock reaches this, because the other writer is not in
+            # this process. The winner's row is current, so drop our work rather
+            # than adopt its doc_id: our chunk, section and point ids are already
+            # derived from ours, and rewriting them here would orphan vectors.
+            logger.info("Skipping %s: indexed concurrently by another run", file_path)
+            self._log(None, file_path, "index", "unchanged", pr.start, "indexed concurrently")
+            raise _ConcurrentIndexSkipError(file_path) from exc
 
         # Save sections
         section_rows = [

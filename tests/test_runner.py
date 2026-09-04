@@ -311,6 +311,60 @@ class TestProcessFile:
         assert details is not None
         assert details[0] == "embedder exploded"
 
+    def test_concurrent_run_winning_the_path_is_skipped_not_an_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A second process indexing this path first must not fail the file.
+
+        Simulates `rag index` racing `rag watch`: the winner's documents row is
+        already present under a different doc_id, so our write trips the UNIQUE
+        index on documents.file_path. That is a skip, not a failure.
+        """
+        conn = _create_db()
+        event = _make_event(tmp_path)
+        file_path = str(tmp_path / "test.txt")
+        # The other run got there first, with its own doc_id.
+        conn.execute(
+            """INSERT INTO documents
+               (doc_id, file_path, folder_path, folder_ancestors, title,
+                file_type, modified_at, raw_content_hash, normalized_content_hash)
+               VALUES (?, ?, ?, '[]', 'winner', 'txt', '2026-01-01', 'h', 'h')""",
+            ("winner-doc-id", file_path, str(tmp_path)),
+        )
+        conn.commit()
+
+        runner, _mocks = _make_runner(tmp_path, conn)
+        # process_batch resolves doc_id during pre-filter and writes it much
+        # later. Returning None here reproduces exactly that: the pre-filter saw
+        # no row for this path, the other run inserted one in the meantime.
+        # (process_file is not affected -- it resolves doc_id immediately before
+        # use, so it simply reuses the winner's id.)
+        runner._existing_doc_id = MagicMock(return_value=None)  # type: ignore[method-assign]
+
+        counts = runner.process_batch([event])
+
+        assert counts[ProcessingOutcome.ERROR] == 0
+        assert counts[ProcessingOutcome.UNCHANGED] == 1
+        # The winner's row is untouched, and we added nothing of our own.
+        rows = conn.execute(
+            "SELECT doc_id FROM documents WHERE file_path = ?", (file_path,)
+        ).fetchall()
+        assert [r[0] for r in rows] == ["winner-doc-id"]
+
+    def test_unrelated_integrity_error_still_propagates(self, tmp_path: Path) -> None:
+        """Only the documents.file_path collision is swallowed."""
+        conn = _create_db()
+        event = _make_event(tmp_path)
+        runner, mocks = _make_runner(tmp_path, conn)
+        mocks["db"] = runner._db
+        runner._db.upsert_document = MagicMock(  # type: ignore[method-assign]
+            side_effect=sqlite3.IntegrityError("FOREIGN KEY constraint failed")
+        )
+
+        outcome, _detail = runner.process_file(event)
+
+        assert outcome == ProcessingOutcome.ERROR
+
     def test_batch_parse_failure_records_the_parse_error(self, tmp_path: Path) -> None:
         """The parser thread's reason has to survive the hop to the main thread."""
         conn = _create_db()
