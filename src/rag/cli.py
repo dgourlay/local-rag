@@ -6,6 +6,7 @@ import logging
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING, ClassVar
 import click
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
     from rag.config import AppConfig
     from rag.db.models import SqliteMetadataDB
@@ -22,24 +23,42 @@ if TYPE_CHECKING:
     from rag.types import FileEvent
 
 
-class _PathClaims:
-    """Grants one owner at a time to each file path under `watch`.
+class _IndexGate:
+    """Coordinates `watch`'s two producers: the re-scan thread and the live handler.
 
-    `watch` runs two independent producers -- the startup re-scan thread and the
-    live watchdog handler -- and both fed the same path to `process_batch`
-    concurrently. Two workers then raced to insert the same
-    `documents.file_path` and the loser died on the UNIQUE constraint.
+    Two responsibilities, because there are two distinct failure modes.
 
-    Claiming is per path and first-come: whoever claims a path processes it, and
-    the other producer skips it for this round. Skipping is safe because the
-    winner reads the file at process time, so it picks up whatever the other
-    producer saw. A path that changes *again* while claimed is not re-queued, so
-    the next filesystem event for it is what brings it back.
+    ``claim``/``release`` stop both producers indexing the *same* path. Each
+    ``process_batch`` resolves a file's ``doc_id`` during pre-filter but writes
+    the row much later, so two passes over one new path both see no existing
+    ``doc_id``, mint separate UUIDs, and collide on ``documents.file_path``,
+    which is UNIQUE. ``upsert_document`` cannot absorb that: its conflict clause
+    targets ``doc_id`` only.
+
+    ``serialize`` stops the producers running ``process_batch`` concurrently *at
+    all*, even on disjoint paths. They share one ``sqlite3.Connection``
+    (``check_same_thread=False``), and transaction state on a connection is
+    global to it -- one thread's ``commit`` publishes whatever the other has
+    written so far, and its ``rollback`` discards it. Left unserialized this
+    silently loses rows as well as raising ``OperationalError`` and
+    ``InterfaceError``. Claiming alone does not help, since the damage does not
+    require the two producers to share a path.
+
+    Skipping a claimed path loses nothing: the winner reads the file at process
+    time, so it sees whatever the other producer saw. A path that changes *again*
+    while claimed is not re-queued, so the next filesystem event brings it back.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._in_flight: set[str] = set()
+        self._batch_lock = threading.Lock()
+
+    @contextmanager
+    def serialize(self) -> Iterator[None]:
+        """Hold for the duration of a `process_batch` call."""
+        with self._batch_lock:
+            yield
 
     def claim(self, paths: Iterable[str]) -> list[str]:
         """Return the subset of `paths` the caller now owns, in input order.
@@ -637,7 +656,7 @@ def watch(daemon: bool) -> None:
 
     # Track known file paths so we can detect deletions
     known_paths: set[str] = set(db.get_all_tracked_paths())
-    claims = _PathClaims()
+    gate = _IndexGate()
 
     class _Handler(FileSystemEventHandler):
         def __init__(self) -> None:
@@ -693,18 +712,19 @@ def watch(daemon: bool) -> None:
             # The observer is already running by now, so a path this scan found
             # may also be sitting in the handler's pending map. Claim before
             # processing so only one of us indexes it.
-            owned = set(claims.claim([ev.file_path for ev in events]))
+            owned = set(gate.claim([ev.file_path for ev in events]))
             events = [ev for ev in events if ev.file_path in owned]
             if events:
                 click.echo(f"Startup re-scan found {len(events)} changes.")
                 try:
                     display = _ProgressDisplay(len(events))
-                    counts = runner.process_batch(
-                        events,
-                        progress=display.on_done,
-                        on_start=display.on_start,
-                        on_status=display.on_status,
-                    )
+                    with gate.serialize():
+                        counts = runner.process_batch(
+                            events,
+                            progress=display.on_done,
+                            on_start=display.on_start,
+                            on_status=display.on_status,
+                        )
                     click.echo(f"  {_format_counts(counts, len(events))}")
                     # Update known paths after re-scan
                     for ev in events:
@@ -713,7 +733,7 @@ def watch(daemon: bool) -> None:
                         else:
                             known_paths.add(ev.file_path)
                 finally:
-                    claims.release(owned)
+                    gate.release(owned)
             else:
                 click.echo("Startup re-scan: no changes detected.")
         except Exception as exc:
@@ -738,7 +758,7 @@ def watch(daemon: bool) -> None:
             time.sleep(config.watcher.batch_window_seconds)
             # Skip paths the startup re-scan is still working on; it will finish
             # them, and a second pass here would race its inserts.
-            ready = claims.claim(handler.flush())
+            ready = gate.claim(handler.flush())
             if ready:
                 from datetime import UTC, datetime
 
@@ -782,12 +802,13 @@ def watch(daemon: bool) -> None:
                         continue
                 if events:
                     display = _ProgressDisplay(len(events))
-                    counts = runner.process_batch(
-                        events,
-                        progress=display.on_done,
-                        on_start=display.on_start,
-                        on_status=display.on_status,
-                    )
+                    with gate.serialize():
+                        counts = runner.process_batch(
+                            events,
+                            progress=display.on_done,
+                            on_start=display.on_start,
+                            on_status=display.on_status,
+                        )
                     click.echo(f"  {_format_counts(counts, len(events))}")
                     # Update known paths
                     for ev in events:
@@ -798,7 +819,7 @@ def watch(daemon: bool) -> None:
                 # Released without a finally on purpose: only KeyboardInterrupt is
                 # handled below, so any other exception ends `watch` outright and
                 # a still-held claim cannot outlive it.
-                claims.release(ready)
+                gate.release(ready)
     except KeyboardInterrupt:
         observer.stop()
     observer.join()

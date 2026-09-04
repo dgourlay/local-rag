@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from rag.cli import _PathClaims
+from rag.cli import _IndexGate
 from rag.types import FileEvent, ProcessingOutcome, SyncStateRow
 
 # --- Helper to build a fake SyncStateRow ---
@@ -27,43 +28,43 @@ def _make_sync_state(file_path: str, content_hash: str = "abc123") -> SyncStateR
 #     indexing the same file concurrently ---
 
 
-class TestPathClaims:
+class TestIndexGateClaims:
     """Guards the UNIQUE constraint failed: documents.file_path race."""
 
     def test_first_claim_is_granted(self) -> None:
-        claims = _PathClaims()
+        claims = _IndexGate()
         assert claims.claim(["/docs/a.pdf", "/docs/b.pdf"]) == ["/docs/a.pdf", "/docs/b.pdf"]
 
     def test_second_claim_on_a_held_path_is_refused(self) -> None:
         # This is the actual bug: the re-scan thread holds a path, the live
         # watcher must not also hand it to process_batch.
-        claims = _PathClaims()
+        claims = _IndexGate()
         claims.claim(["/docs/a.pdf"])
         assert claims.claim(["/docs/a.pdf"]) == []
 
     def test_refuses_only_the_overlap(self) -> None:
-        claims = _PathClaims()
+        claims = _IndexGate()
         claims.claim(["/docs/a.pdf"])
         assert claims.claim(["/docs/a.pdf", "/docs/b.pdf"]) == ["/docs/b.pdf"]
 
     def test_release_allows_reclaiming(self) -> None:
-        claims = _PathClaims()
+        claims = _IndexGate()
         claims.claim(["/docs/a.pdf"])
         claims.release(["/docs/a.pdf"])
         assert claims.claim(["/docs/a.pdf"]) == ["/docs/a.pdf"]
 
     def test_release_of_unheld_path_is_harmless(self) -> None:
-        claims = _PathClaims()
+        claims = _IndexGate()
         claims.release(["/docs/never-claimed.pdf"])
         assert claims.claim(["/docs/never-claimed.pdf"]) == ["/docs/never-claimed.pdf"]
 
     def test_duplicate_paths_in_one_call_granted_once(self) -> None:
-        claims = _PathClaims()
+        claims = _IndexGate()
         assert claims.claim(["/docs/a.pdf", "/docs/a.pdf"]) == ["/docs/a.pdf"]
 
     def test_concurrent_claims_grant_each_path_exactly_once(self) -> None:
         """Two threads racing on the same paths: every path goes to one winner."""
-        claims = _PathClaims()
+        claims = _IndexGate()
         paths = [f"/docs/{i}.pdf" for i in range(200)]
         granted: list[list[str]] = []
         lock = threading.Lock()
@@ -84,6 +85,82 @@ class TestPathClaims:
         all_granted = [p for batch in granted for p in batch]
         assert sorted(all_granted) == sorted(paths)
         assert len(all_granted) == len(set(all_granted))
+
+
+class TestIndexGateSerialize:
+    """Guards the shared-sqlite3.Connection corruption, which claiming misses.
+
+    Both producers drive one connection whose transaction state is global to it,
+    so overlapping process_batch calls lose rows silently even when the two
+    producers touch entirely different paths.
+    """
+
+    def test_serialize_excludes_a_second_thread(self) -> None:
+        gate = _IndexGate()
+        inside = threading.Event()
+        second_got_in = threading.Event()
+        release_first = threading.Event()
+
+        def first() -> None:
+            with gate.serialize():
+                inside.set()
+                release_first.wait(timeout=5)
+
+        def second() -> None:
+            inside.wait(timeout=5)
+            with gate.serialize():
+                second_got_in.set()
+
+        t1 = threading.Thread(target=first)
+        t2 = threading.Thread(target=second)
+        t1.start()
+        t2.start()
+        # Second thread must still be blocked while the first holds the gate.
+        assert not second_got_in.wait(timeout=0.5)
+        release_first.set()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+        assert second_got_in.is_set()
+
+    def test_serialize_never_overlaps_under_contention(self) -> None:
+        """No two threads inside the gate at once -- disjoint paths included."""
+        gate = _IndexGate()
+        concurrent = 0
+        max_concurrent = 0
+        bookkeeping = threading.Lock()
+        start = threading.Barrier(4)
+
+        def worker() -> None:
+            nonlocal concurrent, max_concurrent
+            start.wait(timeout=5)
+            for _ in range(25):
+                with gate.serialize():
+                    with bookkeeping:
+                        concurrent += 1
+                        max_concurrent = max(max_concurrent, concurrent)
+                    time.sleep(0.0005)
+                    with bookkeeping:
+                        concurrent -= 1
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert max_concurrent == 1
+
+    def test_serialize_releases_on_exception(self) -> None:
+        gate = _IndexGate()
+        msg = "boom"
+        try:
+            with gate.serialize():
+                raise RuntimeError(msg)
+        except RuntimeError:
+            pass
+        # A leaked gate would deadlock watch permanently.
+        with gate.serialize():
+            pass
 
 
 # --- Task 1: process_batch output formatting ---
