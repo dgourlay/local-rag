@@ -290,7 +290,7 @@ enabled = true                  # auto-generate 3 questions per chunk at index t
 
 [mcp]
 transport = "stdio"
-host = "127.0.0.1"
+host = "127.0.0.1"              # HTTP transport: loopback only (no auth)
 port = 8080
 
 [watcher]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import ipaddress
 import logging
 import sys
 from typing import TYPE_CHECKING
@@ -10,6 +12,11 @@ from rag.mcp.prompts import register_prompts
 from rag.mcp.tools import register_tools
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from mcp.server.transport_security import TransportSecuritySettings
+    from starlette.applications import Starlette
+
     from rag.config import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -98,33 +105,68 @@ async def run_stdio_server(config: AppConfig) -> None:
         )
 
 
-async def run_http_server(config: AppConfig) -> None:
-    """Run the MCP server using Streamable HTTP transport."""
-    import uvicorn
-    from mcp.server.streamable_http import StreamableHTTPServerTransport
+def _require_loopback(host: str) -> None:
+    """Refuse a non-loopback bind: the HTTP transport has no authentication."""
+    if host == "localhost":
+        return
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return
+    except ValueError:
+        pass
+    msg = (
+        f"Refusing to serve MCP over HTTP on {host!r}: the HTTP transport has no "
+        "authentication, so mcp.host must be a loopback address (127.0.0.1, ::1, "
+        "or localhost). To reach it from another machine, use an SSH tunnel "
+        "(ssh -L <port>:127.0.0.1:<port> <this-host>)."
+    )
+    raise ValueError(msg)
+
+
+def _loopback_security(port: int) -> TransportSecuritySettings:
+    """Accept only loopback Host/Origin headers, blocking DNS-rebinding pages."""
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    hosts = ("127.0.0.1", "localhost", "[::1]")
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[f"{h}:{port}" for h in hosts],
+        allowed_origins=[f"http://{h}:{port}" for h in hosts],
+    )
+
+
+def create_http_app(config: AppConfig) -> Starlette:
+    """Build the Streamable HTTP ASGI app, served at /mcp/."""
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
     from starlette.routing import Mount
 
-    _configure_logging()
+    _require_loopback(config.mcp.host)
     server = create_server(config)
-
-    transport = StreamableHTTPServerTransport(
-        mcp_session_id=None,
-        is_json_response_enabled=True,
+    session_manager = StreamableHTTPSessionManager(
+        app=server,
+        json_response=True,
+        stateless=True,
+        security_settings=_loopback_security(config.mcp.port),
     )
 
-    async def handle_mcp() -> None:
-        async with transport.connect() as (read_stream, write_stream):
-            await server.run(
-                read_stream,
-                write_stream,
-                server.create_initialization_options(),
-            )
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+        async with session_manager.run():
+            yield
 
-    app = Starlette(
-        routes=[Mount("/mcp", app=transport.handle_request)],
-        on_startup=[lambda: None],
+    return Starlette(
+        routes=[Mount("/mcp", app=session_manager.handle_request)],
+        lifespan=lifespan,
     )
+
+
+async def run_http_server(config: AppConfig) -> None:
+    """Run the MCP server using Streamable HTTP transport."""
+    import uvicorn
+
+    _configure_logging()
+    app = create_http_app(config)
 
     config_uvicorn = uvicorn.Config(
         app,

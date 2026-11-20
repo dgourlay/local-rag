@@ -12,6 +12,8 @@ All notable changes to local-rag are documented here.
 - **Qdrant 1.20**: `docker-compose.yml` and `scripts/setup-qdrant.sh` now run `qdrant/qdrant:v1.20`, matching qdrant-client 1.20 and clearing its version-incompatibility warning. Existing storage upgrades in place, but Qdrant only supports one minor version per hop: step an older volume through each minor release (1.17 → 1.18 → 1.19 → 1.20)
 
 ### Fixed
+- **`rag serve --http` works again**: it crashed at startup on Starlette 1.x (`on_startup` was removed), and its transport was never connected to the server. It now uses the MCP SDK's `StreamableHTTPSessionManager`, served at `/mcp/`
+- **HTTP transport stays on loopback**: it has no authentication, so it refuses to start unless `mcp.host` is a loopback address, and it rejects requests whose `Host` or `Origin` header isn't loopback (DNS-rebinding protection)
 - `scripts/setup-qdrant.sh` publishes Qdrant on `127.0.0.1` only (it listened on every interface) and publishes the gRPC port 6334 that the client uses by default
 
 ---
