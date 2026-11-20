@@ -8,6 +8,9 @@ All notable changes to local-rag are documented here.
 - **Codex MCP target**: `rag mcp-config --install codex` writes a `[mcp_servers.local-rag]` table to `~/.codex/config.toml`, merging into existing settings and safe to re-run
 - `rag mcp-config` lists Codex among auto-detected targets when the `codex` CLI is on PATH
 
+### Changed
+- **Qdrant 1.20**: `docker-compose.yml` and `scripts/setup-qdrant.sh` now run `qdrant/qdrant:v1.20`, matching qdrant-client 1.20 and clearing its version-incompatibility warning. Existing storage upgrades in place, but Qdrant only supports one minor version per hop: step an older volume through each minor release (1.17 → 1.18 → 1.19 → 1.20)
+
 ---
 
 ## [v0.5.0] - 2026-03-16

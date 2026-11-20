@@ -29,7 +29,7 @@ Single Python process handles: filesystem watching (watchdog) → Docling parsin
 
 ## Tech Stack
 
-- Python 3.11+, Pydantic v2, SQLite (WAL mode), Qdrant v1.17 (Docker)
+- Python 3.11+, Pydantic v2, SQLite (WAL mode), Qdrant v1.20 (Docker)
 - Docling (parsing, OcrAutoOptions), sentence-transformers/BGE-M3 (embeddings), onnxruntime (reranker)
 - MCP SDK `mcp>=1.25,<2` (stdio + Streamable HTTP transport)
 

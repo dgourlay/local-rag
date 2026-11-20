@@ -162,12 +162,12 @@ const components = {
         "Deterministic UUID5 point IDs: upsert overwrites, no delete+reinsert",
       ],
       config: [
-        "Docker: qdrant/qdrant:v1.17 on localhost:6333",
+        "Docker: qdrant/qdrant:v1.20 on localhost:6333",
         "Collection: 'documents', cosine distance",
         "Point ID format: UUID5(doc_id:section:chunk_order)",
         "Stale point cleanup per doc_id on re-index",
       ],
-      tech: "qdrant/qdrant:v1.17 Docker · qdrant-client · AsyncQdrantClient",
+      tech: "qdrant/qdrant:v1.20 Docker · qdrant-client · AsyncQdrantClient",
     },
   },
   retrieval: {
@@ -1910,7 +1910,7 @@ transport = "stdio"`}
                 {[
                   { name: "Python 3.11+", note: "Runtime" },
                   { name: "Docker", note: "For Qdrant container" },
-                  { name: "Qdrant v1.17", note: "docker run qdrant/qdrant" },
+                  { name: "Qdrant v1.20", note: "docker run qdrant/qdrant" },
                   { name: "claude CLI", note: "For summarization (optional)" },
                 ].map((p, i) => (
                   <div

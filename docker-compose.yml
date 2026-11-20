@@ -1,6 +1,6 @@
 services:
   qdrant:
-    image: qdrant/qdrant:v1.17
+    image: qdrant/qdrant:v1.20
     ports:
       - "127.0.0.1:6333:6333"
       - "127.0.0.1:6334:6334"
