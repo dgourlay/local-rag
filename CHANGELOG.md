@@ -11,6 +11,9 @@ All notable changes to local-rag are documented here.
 ### Changed
 - **Qdrant 1.20**: `docker-compose.yml` and `scripts/setup-qdrant.sh` now run `qdrant/qdrant:v1.20`, matching qdrant-client 1.20 and clearing its version-incompatibility warning. Existing storage upgrades in place, but Qdrant only supports one minor version per hop: step an older volume through each minor release (1.17 → 1.18 → 1.19 → 1.20)
 
+### Fixed
+- `scripts/setup-qdrant.sh` publishes Qdrant on `127.0.0.1` only (it listened on every interface) and publishes the gRPC port 6334 that the client uses by default
+
 ---
 
 ## [v0.5.0] - 2026-03-16
